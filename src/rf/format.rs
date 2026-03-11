@@ -25,3 +25,23 @@ impl SampleFormat {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_bytes() {
+        assert_eq!(SampleFormat::I8.bytes_per_sample(), 2);
+        assert_eq!(SampleFormat::I16.bytes_per_sample(), 4);
+        assert_eq!(SampleFormat::F32.bytes_per_sample(), 8);
+    }
+
+    #[test]
+    fn sample_format_from_str() {
+        assert_eq!(SampleFormat::from_str("i8").unwrap(), SampleFormat::I8);
+        assert_eq!(SampleFormat::from_str("SC8").unwrap(), SampleFormat::I8);
+        assert_eq!(SampleFormat::from_str("f32").unwrap(), SampleFormat::F32);
+        assert!(SampleFormat::from_str("u8").is_err());
+    }
+}

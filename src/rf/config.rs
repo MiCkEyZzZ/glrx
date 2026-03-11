@@ -59,3 +59,23 @@ impl Default for RfConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rf_config_default_are_valid() {
+        RfConfig::default()
+            .validate()
+            .expect("default config should be valid");
+    }
+
+    #[test]
+    fn test_rf_config_samples_in_duration() {
+        let cfg = RfConfig::default();
+        let n = cfg.samples_in(Duration::from_millis(1));
+
+        assert_eq!(n, 2048);
+    }
+}
