@@ -1,1 +1,1 @@
-# glrx
+# GLRX
