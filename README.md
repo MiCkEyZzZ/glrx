@@ -3,40 +3,51 @@
 ![Rust](https://img.shields.io/badge/language-Rust-orange)
 ![Status](https://img.shields.io/badge/status-pre--alpha-yellow)
 
-**GLRX** - это модульный GNSS ресивер на Rust, ориентированный на исследовательские
-и инженерные эксперименты с сигналами GPS, ГЛОНАС и другими спутниковыми системами.
+**GLRX** is a modular GNSS receiver written in Rust, designed for research and
+engineering experiments with satellite navigation signals such as GPS, GLONASS,
+and other GNSS constellations.
 
-## Возможности
+The project focuses on reproducibility, modular DSP pipelines, and integration
+with external telemetry and analysis tools.
 
-- Чтение IQ данных из файлов или SDR-устройств.
-- Базовая обработка сигнала: mixing, фильтрация, ресемплирование.
-- Acquisition спутников через FFT.
+## Features
+
+- Read IQ data from files or SDR devices.
+- Basic signal processing primitives: mixing, filtering, resampling.
+- Satellite acquisition using FFT-based search.
 - Tracking loops: DLL, PLL, FLL.
-- Декодирование навигационных сообщений и эфемерид.
-- Вычисление псевдодальностей и координат (Least Squares, Kalman).
-- Multi-channel сопровождение спутников.
-- Вывод данных в NMEA/UBX.
-- Интеграция с внешними инструментами: GLOS, GLINT, USMET.
-- Поддержка тестов, бенчмарков и observability.
+- Navigation message and ephemeris decoding.
+- Pseudorange computation and position estimation (Least Squares, Kalman filtering).
+- Multi-channel satellite tracking.
+- Output in standard formats (NMEA / UBX).
+- Integration with external tools: **GLOS**, **GLINT**, **USMET**.
+- Built-in support for testing, benchmarking, and observability.
 
-## Быстрый старт
+## Quick Start
 
-### Требования
+### Requirements
 
 - Rust (stable toolchain)
-- Optional SDR: SoapySDR, RTL-SDR, HackRF
+- Optional SDR hardware:
+    - SoapySDR
+    - RTL-SDR
+    - HackRF
 
-### Сборка
+### Build
 
 ```bash
 cargo build --workspace --release
+```
 
-Тесты
+### Run tests
 
+```bash
 cargo test --workspace
+```
 
-Запуск (симулятор)
+### Run (simulator mode)
 
+```bash
 cargo run --release --bin glrx -- \
   --device sim \
   --freq 1602MHz \
@@ -45,20 +56,20 @@ cargo run --release --bin glrx -- \
   --duration 5
 ```
 
-## Фазы развития
+## Development Roadmap
 
-1.  IQ-ридер и DSP-примитивы
-2.  FFT-based Acquisition
-3.  Tracking loops (DLL/PLL/FLL) и multi-channel
-4.  Декодирование навигационных сообщений и эфемерид
-5.  Вычисление псевдодальностей и solver
-6.  Вывод NMEA/UBX и интеграция с GLINT/USMET
-7.  High-level pipeline и синхронизация времени
-8.  Оптимизация: SIMD, latency
-9.  Observability, тесты, валидация
+1. IQ reader and DSP primitives
+2. FFT-based satellite acquisition
+3. Tracking loops (DLL / PLL / FLL) and multi-channel tracking
+4. Navigation message and ephemeris decoding
+5. Pseudorange computation and position solver
+6. NMEA / UBX output and integration with GLINT / USMET
+7. High-level processing pipeline and time synchronization
+8. Performance optimization (SIMD, latency)
+9. Observability, testing, and validation
 
-## Цели
+## Goals
 
-• Построить модульный GNSS ресивер на Rust.
-• Обеспечить reproducibility и расширяемость.
-• Позволить интеграцию с существующими инструментами анализа и хранения телеметрии.
+- Build a modular GNSS receiver implemented entirely in Rust.
+- Ensure experiment reproducibility and system extensibility.
+- Enable seamless integration with telemetry analysis and storage systems.
