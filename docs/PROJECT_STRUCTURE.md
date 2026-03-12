@@ -43,9 +43,15 @@ glrx
 │   │   ├── mod.rs
 │   │   └── receiver.rs            # соединяет acquisition → tracking → solver
 │   ├── rf                         # IQ потоки / SDR / файлы
-│   │   ├── mod.rs
-│   │   ├── sdr.rs
+│   │   ├── config.rs
+│   │   ├── error.rs
 │   │   ├── file.rs
+│   │   ├── format.rs
+│   │   ├── iq_source.rs
+│   │   ├── metrics.rs
+│   │   ├── mod.rs
+│   │   ├── normalise.rs
+│   │   ├── sdr.rs
 │   │   └── stream.rs
 │   ├── signal                     # базовая обработка сигналов (DSP)
 │   │   ├── mod.rs
