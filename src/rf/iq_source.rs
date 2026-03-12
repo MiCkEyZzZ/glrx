@@ -30,8 +30,10 @@ pub trait IqSource: Send + Sync {
 pub struct IqBlock {
     /// Complex baseband samples, normalised to roughly +/- 1.0.
     pub samples: Vec<Complex32>,
+
     /// Config that was active when this block was captured.
     pub config: RfConfig,
+
     /// Sample index of the first sample in this block (monotonically increasing).
     pub start_sample: u64,
 }
