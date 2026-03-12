@@ -1,5 +1,20 @@
-/target
+# macOS system files
+.DS_Store
 
-*.lock
+# Rust build artifacts
+target/
+dist
+tmp
+**/cargo-target
+Cargo.lock
+
+# Editor and IDE directories
+.idea/
+.vscode/
+.zed/
+.trunk
+*.iml
+out/
+.devcontainer/
 
 ROADMAP.md
