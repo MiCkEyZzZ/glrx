@@ -218,4 +218,55 @@ mod tests {
         assert!((got_re - expected_phase.cos()).abs() < 1e-4);
         assert!((got_im - expected_phase.sin()).abs() < 1e-4);
     }
+
+    #[test]
+    fn test_noise_deterministic() {
+        let mut src1 = MockSdrSource::new(RfConfig::default(), 0.0, 0.1);
+        let mut src2 = MockSdrSource::new(RfConfig::default(), 0.0, 0.1);
+
+        let b1 = src1.read_block(128).unwrap();
+        let b2 = src2.read_block(128).unwrap();
+
+        for (a, b) in b1.samples.iter().zip(b2.samples.iter()) {
+            assert!((a.re - b.re).abs() < 1e-6);
+            assert!((a.im - b.im).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_read_zero_samples() {
+        let mut src = default_mock(0.0);
+        let block = src.read_block(0).unwrap();
+
+        assert_eq!(block.samples.len(), 0);
+        assert_eq!(block.start_sample, 0);
+        assert_eq!(src.metrics().total_samples, 0);
+    }
+
+    #[test]
+    fn test_tone_accessor() {
+        let src = default_mock(12345.0);
+
+        assert_eq!(src.tone_hz(), 12345.0);
+    }
+
+    #[test]
+    fn test_metrics_rate_reported() {
+        let mut src = default_mock(0.0);
+
+        src.read_block(10).unwrap();
+
+        let metrics = src.metrics();
+
+        assert_eq!(metrics.measured_rate_hz, Some(src.config().sample_rate_hz));
+    }
+
+    #[test]
+    fn test_phase_wraparound() {
+        let mut src = default_mock(1_000_000.0);
+        let _ = src.read_block(10_000).unwrap();
+
+        assert!(src.phase >= 0.0);
+        assert!(src.phase < TAU);
+    }
 }
