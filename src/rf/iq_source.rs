@@ -53,3 +53,25 @@ impl IqBlock {
         self.samples.len() as f64 / self.config.sample_rate_hz
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use num_complex::Complex32;
+
+    use super::*;
+    use crate::rf::config::RfConfig;
+
+    #[test]
+    fn test_iqblock_duration() {
+        let config = Arc::new(RfConfig::default());
+        let block = IqBlock {
+            samples: vec![Complex32::new(0.0, 0.0); 2048],
+            config,
+            start_sample: 0,
+        };
+
+        assert!((block.duration_s() - 0.001).abs() < 1e-9);
+    }
+}
