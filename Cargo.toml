@@ -13,3 +13,6 @@ thiserror = "2.0.18"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[features]
+sdr = []
