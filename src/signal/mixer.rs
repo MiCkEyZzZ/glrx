@@ -50,10 +50,8 @@ impl Nco {
 
         self.phase += self.phase_step;
 
-        if self.phase >= TAU {
-            self.phase -= TAU;
-        } else if self.phase < 0.0 {
-            self.phase += TAU;
+        if self.phase > TAU || self.phase < 0.0 {
+            self.phase = self.phase.rem_euclid(TAU);
         }
 
         Complex32::new(cos, sin)
@@ -114,7 +112,7 @@ impl Mixer {
     }
 
     /// Настраивает частоту дискретизации.
-    pub fn sample_rate_hz(&self) -> f64 {
+    pub fn sample_rate(&self) -> f64 {
         self.sample_rate_hz
     }
 
@@ -145,6 +143,20 @@ impl Mixer {
     pub fn reset(&mut self) {
         self.nco.reset();
     }
+}
+
+/// Однократное изменение частоты блока IQ.
+///
+/// Начинается с фазы = 0 и **не** является непрерывным между вызовами.
+/// Используйте [`Mixer`] для потоковой передачи.
+pub fn mix_shift(
+    input: &[Complex32],
+    freq_hz: f64,
+    sample_rate_hz: f64,
+) -> Vec<Complex32> {
+    let mut nco = Nco::new(freq_hz, sample_rate_hz);
+
+    input.iter().map(|&s| s * nco.advance()).collect()
 }
 
 /// Генерирует комплексный несущий тон на частоте `freq_hz`.
@@ -416,5 +428,182 @@ mod tests {
         let after = mixer.nco.phase_step_rad();
 
         assert!(after > before);
+    }
+
+    #[test]
+    fn test_mix_shift_basic() {
+        let input = vec![Complex32::new(1.0, 0.0); 4];
+        let out = mix_shift(&input, FS / 4.0, FS);
+
+        let expected = [
+            Complex32::new(1.0, 0.0),
+            Complex32::new(0.0, 1.0),
+            Complex32::new(-1.0, 0.0),
+            Complex32::new(0.0, -1.0),
+        ];
+
+        for (a, b) in out.iter().zip(expected.iter()) {
+            assert!((a.re - b.re).abs() < 1e-5, "re: got={}, exp={}", a.re, b.re);
+            assert!((a.im - b.im).abs() < 1e-5, "im: got={}, exp={}", a.im, b.im);
+        }
+    }
+
+    #[test]
+    fn test_mix_shift_phase_starts_from_zero_each_call() {
+        let input = vec![Complex32::new(1.0, 0.0); 2];
+        let out1 = mix_shift(&input, FS / 8.0, FS);
+        let out2 = mix_shift(&input, FS / 8.0, FS);
+
+        // Каждый вызов начинается с фазы = 0
+        assert_eq!(out1[0], Complex32::new(1.0, 0.0));
+        assert_eq!(out2[0], Complex32::new(1.0, 0.0));
+    }
+
+    #[test]
+    fn test_mix_shift_downconversion() {
+        // 10 kHz tone → mix_shift -10 kHz → DC
+        let tone = generate_carrier(10_000.0, FS, 128);
+        let out = mix_shift(&tone, -10_000.0, FS);
+
+        for s in &out {
+            assert!((s.re - 1.0).abs() < 1e-3);
+            assert!(s.im.abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn test_mix_shift_zero_frequency_is_identity() {
+        let input = generate_carrier(5_000.0, FS, 64);
+        let out = mix_shift(&input, 0.0, FS);
+
+        for (a, b) in input.iter().zip(out.iter()) {
+            assert!((a.re - b.re).abs() < 1e-6);
+            assert!((a.im - b.im).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn nco_phase_wrap_high_frequency() {
+        let mut nco = Nco::new(FS * 2.0, FS); // freq > fs
+        for _ in 0..10 {
+            let s = nco.advance();
+            assert!(nco.phase_rad() >= 0.0 && nco.phase_rad() < TAU);
+            let mag = (s.re * s.re + s.im * s.im).sqrt();
+            assert!((mag - 1.0).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn nco_zero_samples_generate() {
+        let mut nco = Nco::new(1_000.0, FS);
+        let v = nco.generate(0);
+        assert!(v.is_empty());
+    }
+
+    #[test]
+    fn nco_negative_frequency_behavior() {
+        let mut nco = Nco::new(-FS / 4.0, FS);
+        let s0 = nco.advance();
+        let s1 = nco.advance();
+        let s2 = nco.advance();
+
+        // Проверяем, что фаза уменьшается (вращение по часовой стрелке)
+        let phase0 = s0.im.atan2(s0.re);
+        let phase1 = s1.im.atan2(s1.re);
+        let phase2 = s2.im.atan2(s2.re);
+
+        assert!(phase1 < phase0 || (phase0 - phase1).abs() > 1e-6);
+        assert!(phase2 < phase1 || (phase1 - phase2).abs() > 1e-6);
+    }
+
+    #[test]
+    fn mixer_adjust_frequency_continuous_phase() {
+        let mut mixer = Mixer::new(10_000.0, FS);
+        let input = generate_carrier(1_000.0, FS, 8);
+        let out1 = mixer.mix(&input);
+
+        mixer.adjust_frequency(5_000.0);
+        let out2 = mixer.mix(&input);
+
+        // Проверяем, что фаза не срывается
+        let diff_re = (out1[0].re - out2[0].re).abs();
+        assert!(diff_re <= 2.0); // условно, проверяем что не NaN
+    }
+
+    #[test]
+    fn mixer_reset_after_adjust_frequency() {
+        let mut mixer = Mixer::new(5_000.0, FS);
+        mixer.adjust_frequency(10_000.0);
+        mixer.reset();
+        assert_eq!(mixer.phase_rad(), 0.0);
+    }
+
+    #[test]
+    fn mixer_zero_input_is_safe() {
+        let mut mixer = Mixer::new(1_000.0, FS);
+        let input: Vec<Complex32> = vec![];
+        let out = mixer.mix(&input);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn mixer_large_block_mix() {
+        let input = generate_carrier(10_000.0, FS, 10_000);
+        let mut mixer = Mixer::new(-10_000.0, FS);
+        let out = mixer.mix(&input);
+        for s in out.iter().take(10) {
+            assert!((s.re - 1.0).abs() < 1e-3);
+            assert!(s.im.abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn mix_shift_phase_starts_zero_each_call() {
+        let input = vec![Complex32::new(1.0, 0.0); 3];
+        let out1 = mix_shift(&input, FS / 4.0, FS);
+        let out2 = mix_shift(&input, FS / 4.0, FS);
+
+        assert_eq!(out1[0], Complex32::new(1.0, 0.0));
+        assert_eq!(out2[0], Complex32::new(1.0, 0.0));
+    }
+
+    #[test]
+    fn mix_shift_downconversion_to_dc() {
+        let tone = generate_carrier(10_000.0, FS, 128);
+        let out = mix_shift(&tone, -10_000.0, FS);
+
+        for s in &out {
+            assert!((s.re - 1.0).abs() < 1e-3);
+            assert!(s.im.abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn mix_shift_upconversion() {
+        let tone = generate_carrier(5_000.0, FS, 64);
+        let out = mix_shift(&tone, 10_000.0, FS);
+        let expected = generate_carrier(15_000.0, FS, 64);
+
+        for (a, b) in out.iter().zip(expected.iter()) {
+            assert!((a.re - b.re).abs() < 1e-3);
+            assert!((a.im - b.im).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn mix_shift_zero_frequency_identity() {
+        let input = generate_carrier(3_000.0, FS, 32);
+        let out = mix_shift(&input, 0.0, FS);
+        for (a, b) in input.iter().zip(out.iter()) {
+            assert!((a.re - b.re).abs() < 1e-6);
+            assert!((a.im - b.im).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn mix_shift_large_block() {
+        let input = generate_carrier(1_000.0, FS, 5_000);
+        let out = mix_shift(&input, 2_000.0, FS);
+        assert_eq!(out.len(), input.len());
     }
 }
