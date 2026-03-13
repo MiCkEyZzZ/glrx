@@ -13,8 +13,7 @@ pub struct Nco {
 }
 
 impl Nco {
-    /// Создаёт генератор случайных чисел (NCO) на частоте `freq_hz` для
-    /// заданной частоты дискретизации.
+    /// Создаёт NCO на частоте `freq_hz` для заданной частоты дискретизации
     pub fn new(
         freq_hz: f64,
         sample_rate_hz: f64,
@@ -42,9 +41,9 @@ impl Nco {
 
         if self.phase >= TAU {
             self.phase -= TAU;
-        } else {
+        } else if self.phase < 0.0 {
             self.phase += TAU;
-        };
+        }
 
         Complex32::new(cos, sin)
     }
@@ -52,6 +51,11 @@ impl Nco {
     #[inline]
     pub fn phase_rad(&self) -> f32 {
         self.phase
+    }
+
+    #[inline]
+    pub fn phase_step_rad(&self) -> f32 {
+        self.phase_step
     }
 
     pub fn reset(&mut self) {
@@ -165,5 +169,45 @@ mod tests {
 
         assert!((s.re - 1.0).abs() < 1e-5);
         assert!(s.im.abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_nco_phase_step_matches_frequency() {
+        let freq = 10_000.0;
+        let nco = Nco::new(freq, FS);
+        let expected = (TAU as f64 * freq / FS) as f32;
+
+        assert!((nco.phase_step_rad() - expected).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_nco_negative_frequency_rotates_clockwise() {
+        let mut nco = Nco::new(-FS / 4.0, FS);
+        let expected = [
+            Complex32::new(1.0, 0.0),
+            Complex32::new(0.0, -1.0),
+            Complex32::new(-1.0, 0.0),
+            Complex32::new(0.0, 1.0),
+        ];
+
+        for e in &expected {
+            let s = nco.advance();
+
+            assert!((s.re - e.re).abs() < 1e-5);
+            assert!((s.im - e.im).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn test_nco_phase_wrap_range() {
+        let mut nco = Nco::new(12345.0, FS);
+
+        for _ in 0..10000 {
+            nco.advance();
+
+            let phase = nco.phase_rad();
+
+            assert!(phase >= 0.0 && phase < TAU);
+        }
     }
 }
