@@ -86,4 +86,26 @@ mod tests {
 
         assert_eq!(n, 2048);
     }
+
+    #[test]
+    fn test_rf_config_validate_errors() {
+        let mut cfg = RfConfig::default();
+
+        cfg.sample_rate_hz = 0.0;
+
+        assert!(cfg.validate().is_err());
+
+        cfg.sample_rate_hz = 2_048_000.0;
+        cfg.center_freq_hz = 0.0;
+
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn test_bandwidth_and_period() {
+        let cfg = RfConfig::default();
+
+        assert_eq!(cfg.bandwidth_hz(), 1_024_000.0);
+        assert!((cfg.sample_period_s() - 1.0 / 2_048_000.0).abs() < 1e-12);
+    }
 }

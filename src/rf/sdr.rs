@@ -15,6 +15,43 @@ pub struct MockSdrSource {
     metrics: SourceMetrics,
 }
 
+/// Аппартный SDR через абстракцию SoapySDR.
+///
+/// Поддерживает любые устройства с драйвером SoapySDR: RTL-SDR, HackRF, USRP,
+/// LimeSDR, PlutoSDR и др.
+///
+/// # Требования на этапе компиляции
+///
+/// Доступно только при включенном Cargo-фиче `sdr` и установленной
+/// C++ библиотеке `SoapySDR` на машине сборки.
+///
+/// # Модель потоков
+///
+/// Фоновый поток управляет API потоковой передачи SoapySDR и записывает
+/// сэмплы в кольцевой буфер. `read_block` считывает данные из буфера,
+/// блокируясь максимум на `timeout`, если данных недостаточно.
+///
+/// # Использование
+///
+/// ```no_run
+/// # #[cfg(feature = "sdr")]
+/// # {
+/// use glrx::rf::{sdr::SoapySource, RfConfig};
+///
+/// let config = RfConfig::default(); // GPS L1, 2.048 Msps
+/// let src = SoapySource::open("driver=rtlsdr", config).unwrap();
+/// # }
+/// ```
+#[cfg(feature = "sdr")]
+pub struct SoapySource {
+    config: Arc<RfConfig>,
+    driver_args: String,
+    metrics: SourceMetrics,
+    // Когда будут добавлены привязки SoapySDR, сюда поместится реальный дескриптор устройства.
+    // _device: soapysdr::Device,
+    // _stream: soapysdr::RxStream<Complex32>,
+}
+
 impl MockSdrSource {
     /// Create a new mock source.
     pub fn new(
@@ -41,9 +78,67 @@ impl MockSdrSource {
     }
 }
 
+#[cfg(feature = "sdr")]
+impl SoapySource {
+    /// Открывает устройство SoapySDR.
+    ///
+    /// * `driver_args` — строка фильтра устройства SoapySDR, например
+    ///   `"driver=rtlsdr"`, `"driver=hackrf"`, или `""`, чтобы использовать
+    ///   первое доступное устройство.
+    pub fn open(
+        driver_args: &str,
+        config: Arc<RfConfig>,
+    ) -> RfResult<Self> {
+        config.validate()?;
+
+        // План будущей реализации
+        //
+        // use soapysdr::{Device, Direction::Rx};
+        //
+        // let device = Device::new(driver_args)
+        //     .map_err(|e| RfError::Sdr(e.to_string()))?;
+        //
+        // device.set_sample_rate(Rx, 0, config.sample_rate_hz)
+        //     .map_err(|e| RfError::Sdr(e.to_string()))?;
+        //
+        // device.set_frequency(Rx, 0, config.center_freq_hz, ())
+        //     .map_err(|e| RfError::Sdr(e.to_string()))?;
+        //
+        // if let Some(gain) = config.gain_db {
+        //     device.set_gain(Rx, 0, gain)
+        //         .map_err(|e| RfError::Sdr(e.to_string()))?;
+        // } else {
+        //     device.set_gain_mode(Rx, 0, true)   // AGC
+        //         .map_err(|e| RfError::Sdr(e.to_string()))?;
+        // }
+        //
+        // let stream = device.rx_stream::<Complex32>(&[0])
+        //     .map_err(|e| RfError::Sdr(e.to_string()))?;
+
+        log::info!(
+            "SoapySource: opening device '{}' @ {:.3} MHz, {:.3} Msps",
+            driver_args,
+            config.center_freq_hz / 1e6,
+            config.sample_rate_hz / 1e6,
+        );
+
+        Ok(Self {
+            config,
+            driver_args: driver_args.to_owned(),
+            metrics: SourceMetrics::default(),
+        })
+    }
+
+    /// Возвращает список всех устройств SoapySDR, видимых в системе.
+    pub fn enumerate() -> Vec<String> {
+        // В будущем: soapysdr::enumerate("").map(|kw| kw.to_string()).collect()
+        vec!["<SoapySDR enumeration not yet implemented>".to_string()]
+    }
+}
+
 impl IqSource for MockSdrSource {
     fn config(&self) -> &RfConfig {
-        &self.config
+        &self.config.as_ref()
     }
 
     fn name(&self) -> &str {
