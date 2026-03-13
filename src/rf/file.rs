@@ -2,6 +2,7 @@ use std::{
     fs::File,
     io::{BufReader, Seek, SeekFrom},
     path::{Path, PathBuf},
+    sync::Arc,
     time::Instant,
 };
 
@@ -17,7 +18,7 @@ use crate::{
 pub struct FileSource {
     path: PathBuf,
     reader: BufReader<File>,
-    config: RfConfig,
+    config: Arc<RfConfig>,
     next_samples: u64,
     looping: bool,
     start_time: Option<Instant>,
@@ -26,7 +27,10 @@ pub struct FileSource {
 
 impl FileSource {
     /// Open a file with the given RF configuration.
-    pub fn open<P: AsRef<Path>>(path: P, config: RfConfig) -> RfResult<Self> {
+    pub fn open<P: AsRef<Path>>(
+        path: P,
+        config: Arc<RfConfig>,
+    ) -> RfResult<Self> {
         config.validate()?;
 
         let path = path.as_ref().to_owned();
@@ -43,8 +47,9 @@ impl FileSource {
         })
     }
 
-    /// Enable looping: when EOF is reached the file is rewound and reading continues from the beginning.
-    /// Useful for repeating short signal captures during algorithm development.
+    /// Enable looping: when EOF is reached the file is rewound and reading
+    /// continues from the beginning. Useful for repeating short signal
+    /// captures during algorithm development.
     pub fn with_looping(mut self) -> Self {
         self.looping = true;
         self
@@ -72,7 +77,10 @@ impl FileSource {
         Ok(self.total_samples()? as f64 / self.config.sample_rate_hz)
     }
 
-    fn read_block_inner(&mut self, n: usize) -> RfResult<Vec<Complex32>> {
+    fn read_block_inner(
+        &mut self,
+        n: usize,
+    ) -> RfResult<Vec<Complex32>> {
         let mut samples = Vec::with_capacity(n);
 
         match self.config.format {
@@ -144,7 +152,10 @@ impl FileSource {
         Ok(())
     }
 
-    fn update_rate_metric(&mut self, delivered: usize) {
+    fn update_rate_metric(
+        &mut self,
+        delivered: usize,
+    ) {
         let now = Instant::now();
         let start = *self.start_time.get_or_insert(now);
         let elapsed = (now - start).as_secs_f64();
@@ -172,7 +183,10 @@ impl IqSource for FileSource {
             .unwrap_or("<file>")
     }
 
-    fn read_block(&mut self, n: usize) -> RfResult<super::IqBlock> {
+    fn read_block(
+        &mut self,
+        n: usize,
+    ) -> RfResult<super::IqBlock> {
         let start_sample = self.next_samples;
         let mut samples: Vec<Complex32> = Vec::with_capacity(n);
 
@@ -208,12 +222,15 @@ impl IqSource for FileSource {
 
         Ok(IqBlock {
             samples,
-            config: self.config.clone(),
+            config: Arc::clone(&self.config),
             start_sample,
         })
     }
 
-    fn seek(&mut self, sample_offset: u64) -> RfResult<()> {
+    fn seek(
+        &mut self,
+        sample_offset: u64,
+    ) -> RfResult<()> {
         let byte_offset = sample_offset * self.config.format.bytes_per_sample() as u64;
 
         self.reader.seek(SeekFrom::Start(byte_offset))?;
@@ -230,6 +247,7 @@ impl IqSource for FileSource {
 #[cfg(test)]
 mod tests {
     use std::io::Write;
+
     use tempfile::NamedTempFile;
 
     use super::*;
@@ -259,11 +277,11 @@ mod tests {
         f
     }
 
-    fn default_config(format: SampleFormat) -> RfConfig {
-        RfConfig {
+    fn default_config(format: SampleFormat) -> Arc<RfConfig> {
+        Arc::new(RfConfig {
             format,
             ..RfConfig::default()
-        }
+        })
     }
 
     #[test]

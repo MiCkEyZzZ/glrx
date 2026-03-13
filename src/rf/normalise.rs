@@ -2,7 +2,10 @@ use num_complex::Complex32;
 
 /// Normalise a raw I8 pair to Complex32 in [-1.0, 1.0].
 #[inline]
-pub(crate) fn norm_i8(i: i8, q: i8) -> Complex32 {
+pub(crate) fn norm_i8(
+    i: i8,
+    q: i8,
+) -> Complex32 {
     const SCALE: f32 = 1.0 / 127.0;
 
     Complex32::new(i as f32 * SCALE, q as f32 * SCALE)
@@ -10,14 +13,20 @@ pub(crate) fn norm_i8(i: i8, q: i8) -> Complex32 {
 
 /// Normalise a raw I16 pair to Complex32 in [-1.0, 1.0].
 #[inline]
-pub(crate) fn norm_i16(i: i16, q: i16) -> Complex32 {
+pub(crate) fn norm_i16(
+    i: i16,
+    q: i16,
+) -> Complex32 {
     const SCALE: f32 = 1.0 / 32767.0;
     Complex32::new(i as f32 * SCALE, q as f32 * SCALE)
 }
 
 /// F32 pair: pass through unchanged.
 #[inline]
-pub(crate) fn norm_f32(i: f32, q: f32) -> Complex32 {
+pub(crate) fn norm_f32(
+    i: f32,
+    q: f32,
+) -> Complex32 {
     Complex32::new(i, q)
 }
 

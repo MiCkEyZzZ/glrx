@@ -1,4 +1,4 @@
-use std::f32::consts::TAU;
+use std::{f32::consts::TAU, sync::Arc};
 
 use num_complex::Complex32;
 
@@ -6,7 +6,7 @@ use crate::{IqBlock, IqSource, RfConfig, RfResult, SourceMetrics};
 
 /// Mock SDR - always available, useful for unit tests and CI.
 pub struct MockSdrSource {
-    config: RfConfig,
+    config: Arc<RfConfig>,
     tone_hz: f64,
     noise_amplitude: f32,
     phase: f32,
@@ -17,7 +17,11 @@ pub struct MockSdrSource {
 
 impl MockSdrSource {
     /// Create a new mock source.
-    pub fn new(config: RfConfig, tone_hz: f64, noise_amplitude: f32) -> Self {
+    pub fn new(
+        config: Arc<RfConfig>,
+        tone_hz: f64,
+        noise_amplitude: f32,
+    ) -> Self {
         let phase_step = (TAU as f64 * tone_hz / config.sample_rate_hz) as f32;
 
         Self {
@@ -46,7 +50,10 @@ impl IqSource for MockSdrSource {
         "mock_sdr"
     }
 
-    fn read_block(&mut self, n: usize) -> RfResult<IqBlock> {
+    fn read_block(
+        &mut self,
+        n: usize,
+    ) -> RfResult<IqBlock> {
         let start_sample = self.next_sample;
         let mut samples = Vec::with_capacity(n);
 
@@ -65,7 +72,11 @@ impl IqSource for MockSdrSource {
             }
 
             samples.push(s);
-            self.phase = (self.phase + self.phase_step) % TAU;
+            self.phase += self.phase_step;
+
+            if self.phase >= TAU {
+                self.phase -= TAU
+            }
         }
 
         let len = samples.len() as u64;
@@ -75,7 +86,7 @@ impl IqSource for MockSdrSource {
 
         Ok(IqBlock {
             samples,
-            config: self.config.clone(),
+            config: Arc::clone(&self.config),
             start_sample,
         })
     }
@@ -102,7 +113,7 @@ mod tests {
     use super::*;
 
     fn default_mock(tone_hz: f64) -> MockSdrSource {
-        MockSdrSource::new(RfConfig::default(), tone_hz, 0.0)
+        MockSdrSource::new(Arc::new(RfConfig::default()), tone_hz, 0.0)
     }
 
     #[test]
@@ -190,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_mock_with_noise_varies_samples() {
-        let mut src = MockSdrSource::new(RfConfig::default(), 0.0, 0.1);
+        let mut src = MockSdrSource::new(Arc::new(RfConfig::default()), 0.0, 0.1);
         let block = src.read_block(64).unwrap();
         // At least some samples should differ from pure tone (1+0j) due to noise
         let max_re_dev = block
@@ -221,8 +232,8 @@ mod tests {
 
     #[test]
     fn test_noise_deterministic() {
-        let mut src1 = MockSdrSource::new(RfConfig::default(), 0.0, 0.1);
-        let mut src2 = MockSdrSource::new(RfConfig::default(), 0.0, 0.1);
+        let mut src1 = MockSdrSource::new(Arc::new(RfConfig::default()), 0.0, 0.1);
+        let mut src2 = MockSdrSource::new(Arc::new(RfConfig::default()), 0.0, 0.1);
 
         let b1 = src1.read_block(128).unwrap();
         let b2 = src2.read_block(128).unwrap();
