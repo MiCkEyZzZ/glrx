@@ -1,6 +1,6 @@
 use num_complex::Complex32;
 
-/// Normalise a raw I8 pair to Complex32 in [-1.0, 1.0].
+/// Нормализует пару I8 сэмплов в Complex32 в диапазоне [-1.0, 1.0].
 #[inline]
 pub(crate) fn norm_i8(
     i: i8,
@@ -11,7 +11,7 @@ pub(crate) fn norm_i8(
     Complex32::new(i as f32 * SCALE, q as f32 * SCALE)
 }
 
-/// Normalise a raw I16 pair to Complex32 in [-1.0, 1.0].
+/// Нормализует пару I16 сэмплов в Complex32 в диапазоне [-1.0, 1.0].
 #[inline]
 pub(crate) fn norm_i16(
     i: i16,
@@ -21,7 +21,7 @@ pub(crate) fn norm_i16(
     Complex32::new(i as f32 * SCALE, q as f32 * SCALE)
 }
 
-/// F32 pair: pass through unchanged.
+/// F32 пара: передаётся без изменений.
 #[inline]
 pub(crate) fn norm_f32(
     i: f32,
@@ -47,5 +47,18 @@ mod tests {
         let z = norm_i16(0, 0);
 
         assert_eq!(z, Complex32::new(0.0, 0.0));
+    }
+
+    #[test]
+    fn test_norm_i16_extremes() {
+        let max = norm_i16(32767, -32767);
+        assert!((max.re - 1.0).abs() < 1e-6);
+        assert!((max.im + 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_norm_f32_pass_through() {
+        let x = norm_f32(0.5, -0.5);
+        assert_eq!(x, Complex32::new(0.5, -0.5));
     }
 }
