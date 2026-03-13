@@ -44,4 +44,30 @@ mod tests {
 
         assert!((m.loss_ratio() - 0.1).abs() < 1e-9);
     }
+
+    #[test]
+    fn test_loss_ratio_zero_total() {
+        let m = SourceMetrics::default();
+        assert_eq!(m.loss_ratio(), 0.0);
+    }
+
+    #[test]
+    fn test_loss_ratio_no_drops() {
+        let m = SourceMetrics {
+            total_samples: 1000,
+            dropped_samples: 0,
+            ..Default::default()
+        };
+        assert_eq!(m.loss_ratio(), 0.0);
+    }
+
+    #[test]
+    fn test_loss_ratio_drops_more_than_total() {
+        let m = SourceMetrics {
+            total_samples: 50,
+            dropped_samples: 150,
+            ..Default::default()
+        };
+        assert!((m.loss_ratio() - 0.75).abs() < 1e-9);
+    }
 }
