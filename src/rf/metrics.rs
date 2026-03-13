@@ -1,23 +1,26 @@
-/// Runtime metrics reported by an [`IqSource`].
+/// Метрики выполнения, предоставляемые [`IqSource`].
 #[derive(Debug, Clone, Default)]
 pub struct SourceMetrics {
-    /// Total number of complex samples delivered since start
+    /// Общее количество комплексных сэмплов, выданных с начала работы
     pub total_samples: u64,
 
-    /// Number of samples lost due to buffer overflow or driver underrun
+    /// Количество потерянных сэмплов из-за переполнения буфера или недопоставки
+    /// драйвера
     pub dropped_samples: u64,
 
-    /// Number of stream interruptions detected (gap > 1 ms).
+    /// Количество обнаруженных прерываний потока (разрыв > 1 мс)
     pub interruptions: u64,
 
-    /// Instantaneous measured sample rate (Hz). `None` if not yet available.
+    /// Измеренная мгновенная скорость сэмплирования (Гц). `None`, если пока
+    /// недоступна
     pub measured_rate_hz: Option<f64>,
 
-    /// Signal power estimate in dBFS. `None` if not yet available.
+    /// Оценка мощности сигнала в dBFS. `None`, если пока недоступна
     pub power_dbfs: Option<f32>,
 }
 
 impl SourceMetrics {
+    /// Доля потерь сэмплов
     pub fn loss_ratio(&self) -> f64 {
         if self.total_samples == 0 {
             return 0.0;

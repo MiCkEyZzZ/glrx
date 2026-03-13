@@ -14,7 +14,7 @@ use crate::{
     IqBlock, IqSource, RfConfig, RfError, RfResult, SampleFormat, SourceMetrics,
 };
 
-/// IQ source backed by a binary file.
+/// Источник IQ-данных, читаемый из бинарного файла.
 pub struct FileSource {
     path: PathBuf,
     reader: BufReader<File>,
@@ -26,7 +26,7 @@ pub struct FileSource {
 }
 
 impl FileSource {
-    /// Open a file with the given RF configuration.
+    /// Открыть файл с заданной конфигурацией RF.
     pub fn open<P: AsRef<Path>>(
         path: P,
         config: Arc<RfConfig>,
@@ -47,15 +47,15 @@ impl FileSource {
         })
     }
 
-    /// Enable looping: when EOF is reached the file is rewound and reading
-    /// continues from the beginning. Useful for repeating short signal
-    /// captures during algorithm development.
+    /// Включить режим зацикливания: при достижении конца файла чтение
+    /// продолжается с начала. Удобно для многократного воспроизведения
+    /// коротких сигналов при разработке алгоритмов.
     pub fn with_looping(mut self) -> Self {
         self.looping = true;
         self
     }
 
-    /// Total number of complex samples in the file.
+    /// Общее количество комплексных сэмплов в файле.
     pub fn total_samples(&self) -> RfResult<u64> {
         let file = File::open(&self.path)?;
         let bytes = file.metadata()?.len();
@@ -72,11 +72,12 @@ impl FileSource {
         Ok(bytes / bps)
     }
 
-    /// Duration of the file in seconds.
+    /// Длительность файла в секундах.
     pub fn duration_s(&self) -> RfResult<f64> {
         Ok(self.total_samples()? as f64 / self.config.sample_rate_hz)
     }
 
+    /// Внутреннее чтение блока комплексных сэмплов.
     fn read_block_inner(
         &mut self,
         n: usize,
@@ -146,12 +147,14 @@ impl FileSource {
         Ok(samples)
     }
 
+    /// Перемотка файл в начало.
     fn rewind(&mut self) -> RfResult<()> {
         self.reader.seek(SeekFrom::Start(0))?;
 
         Ok(())
     }
 
+    /// Обновление метрики скорости доставки сэмплов.
     fn update_rate_metric(
         &mut self,
         delivered: usize,
@@ -161,7 +164,7 @@ impl FileSource {
         let elapsed = (now - start).as_secs_f64();
 
         if elapsed > 0.5 {
-            // Update at most every 0.5 s
+            // Обновление не чаще чем раз в 0.5 секунды
             let rate = self.metrics.total_samples as f64 / elapsed;
 
             self.metrics.measured_rate_hz = Some(rate);

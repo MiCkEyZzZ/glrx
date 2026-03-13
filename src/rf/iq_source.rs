@@ -8,46 +8,47 @@ use crate::rf::{
     metrics::SourceMetrics,
 };
 
-/// Unified interface for any IQ sample source.
+/// Унифицированный интерфейс для любого источника IQ-сэмплов.
 pub trait IqSource: Send + Sync {
-    /// Return the configuration of this source.
+    /// Возвращает конфигурацию этого источника.
     fn config(&self) -> &RfConfig;
 
-    /// Read the next block of `n` samples.
+    /// Чтение следующего блока из `n` сэмплов.
     fn read_block(
         &mut self,
         n: usize,
     ) -> RfResult<IqBlock>;
 
-    /// Seek to a sample offset (optional; file sources support this).
+    /// Перейти к указанному смещению сэмпла (опционально; поддерживается,
+    /// например, файловыми источниками).
     fn seek(
         &mut self,
         _sample_offset: u64,
     ) -> RfResult<()> {
-        Err(RfError::Sdr("seek not supported by this source".into()))
+        Err(RfError::Sdr("этот источник не поддерживает seek".into()))
     }
 
-    /// Return a snapshot of current metrics.
+    /// Вернуть снимок текущих метрик.
     fn metrics(&self) -> SourceMetrics;
 
-    /// Human-readable name for logging.
+    /// Читаемое имя источника для логирования.
     fn name(&self) -> &str;
 }
 
 #[derive(Debug, Clone)]
 pub struct IqBlock {
-    /// Complex baseband samples, normalised to roughly +/- 1.0.
+    /// Комплексные базовые сэмплы, нормализованные примерно в диапазон +/- 1.0.
     pub samples: Vec<Complex32>,
 
-    /// Config that was active when this block was captured.
+    /// Конфигурация, действовавшая при захвате этого блока.
     pub config: Arc<RfConfig>,
 
-    /// Sample index of the first sample in this block (monotonically
-    /// increasing).
+    /// Индекс сэмпла первого сэмпла в этом блоке (монотонно увеличивается).
     pub start_sample: u64,
 }
 
 impl IqBlock {
+    /// Длительность блока в секундах.
     pub fn duration_s(&self) -> f64 {
         self.samples.len() as f64 / self.config.sample_rate_hz
     }
