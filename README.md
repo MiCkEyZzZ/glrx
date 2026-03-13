@@ -1,4 +1,4 @@
-# GLRX — Rust GNSS Receiver
+# GLRX — GNSS Receiver
 
 ![Rust](https://img.shields.io/badge/language-Rust-orange)
 ![Status](https://img.shields.io/badge/status-pre--alpha-yellow)
