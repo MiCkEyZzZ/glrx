@@ -13,46 +13,37 @@ with external telemetry and analysis tools.
 ## GLRX – GNSS Receiver Pipeline Overview
 
 ```mermaid
-flowchart TD
+flowchart LR
 
+%% Основные блоки слева направо
 A[IQ Source<br/>FileSource / SDR] --> B[Signal Layer]
-
 B --> C[Acquisition]
-
 C --> D[Tracking]
-
 D --> E[Navigation]
-
 E --> F[Solver]
-
 F --> G[Output]
 
-%% Signal layer internals
-subgraph Signal
+%% Signal Layer internals (горизонтально)
+subgraph SignalLayer [Signal Layer]
 B1[Mixer / NCO]
 B2[Filters]
 B3[Resampler]
 B4[Correlation Utils]
 
-B --> B1
-B1 --> B2
-B2 --> B3
-B3 --> B4
+B --> B1 --> B2 --> B3 --> B4
 end
 
 %% Acquisition internals
-subgraph AcquisitionLayer
+subgraph AcquisitionLayer [Acquisition]
 C1[PRN Generator]
 C2[FFT Correlator]
 C3[Peak Detector]
 
-C --> C1
-C1 --> C2
-C2 --> C3
+C --> C1 --> C2 --> C3
 end
 
 %% Tracking internals
-subgraph TrackingLayer
+subgraph TrackingLayer [Tracking]
 D1[DLL]
 D2[PLL]
 D3[FLL]
@@ -64,28 +55,25 @@ D4 --> D2
 D4 --> D3
 end
 
-%% Navigation
-subgraph NavigationLayer
+%% Navigation internals
+subgraph NavigationLayer [Navigation]
 E1[Frame Decoder]
 E2[Ephemeris Parser]
 E3[Navigation Data]
 
-E --> E1
-E1 --> E2
-E2 --> E3
+E --> E1 --> E2 --> E3
 end
 
-%% Solver
-subgraph SolverLayer
+%% Solver internals
+subgraph SolverLayer [Solver]
 F1[Least Squares]
 F2[Kalman Filter]
 
-F --> F1
-F1 --> F2
+F --> F1 --> F2
 end
 
-%% Output
-subgraph OutputLayer
+%% Output internals
+subgraph OutputLayer [Output]
 G1[NMEA]
 G2[UBX]
 G3[Telemetry]
