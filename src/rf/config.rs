@@ -10,10 +10,12 @@ pub struct RfConfig {
     /// Центральная частота в Гц (например, 1_575_420_000 для GPS L1).
     pub center_freq_hz: f64,
 
-    /// Частота дискретизации в выборках/секунду (например, 2_048_000 для 2,048 МГц).
+    /// Частота дискретизации в выборках/секунду (например, 2_048_000 для 2,048
+    /// МГц).
     pub sample_rate_hz: f64,
 
-    /// Необязательное усиление в дБ. `None` означает использование усиления по умолчанию / АРУ.
+    /// Необязательное усиление в дБ. `None` означает использование усиления по
+    /// умолчанию / АРУ.
     pub gain_db: Option<f64>,
 
     /// Формат передачи входящих образцов.
@@ -29,7 +31,10 @@ impl RfConfig {
         1.0 / self.sample_rate_hz
     }
 
-    pub fn samples_in(&self, duration: Duration) -> usize {
+    pub fn samples_in(
+        &self,
+        duration: Duration,
+    ) -> usize {
         (self.sample_rate_hz * duration.as_secs_f64()) as usize
     }
 

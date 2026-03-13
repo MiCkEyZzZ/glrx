@@ -1,0 +1,93 @@
+# Дубликаты зависимостей
+[bans]
+multiple-versions    = "warn"
+# workspace-crates используют path-зависимости без версии — это нормально для pre-0.1
+wildcards            = "warn"
+allow-wildcard-paths = true
+
+deny = [
+    { name = "openssl", version = "<0.10.60" },
+]
+
+# Пропускаем дубли которые тянет egui/eframe/winit — мы не контролируем их граф
+skip = [
+    { name = "bitflags" },
+    { name = "block2" },
+    { name = "calloop" },
+    { name = "calloop-wayland-source" },
+    { name = "core-foundation" },
+    { name = "getrandom" },
+    { name = "hashbrown" },
+    { name = "linux-raw-sys" },
+    { name = "objc2" },
+    { name = "objc2-app-kit" },
+    { name = "objc2-foundation" },
+    { name = "quick-xml" },
+    { name = "r-efi" },
+    { name = "rand" },
+    { name = "rand_chacha" },
+    { name = "rand_core" },
+    { name = "redox_syscall" },
+    { name = "rustix" },
+    { name = "smithay-client-toolkit" },
+    { name = "thiserror" },
+    { name = "thiserror-impl" },
+    { name = "windows-core" },
+    { name = "windows-link" },
+    { name = "windows-result" },
+    { name = "windows-strings" },
+    { name = "windows-sys" },
+    { name = "windows-targets" },
+    { name = "windows_aarch64_gnullvm" },
+    { name = "windows_aarch64_msvc" },
+    { name = "windows_i686_gnu" },
+    { name = "windows_i686_gnullvm" },
+    { name = "windows_i686_msvc" },
+    { name = "windows_x86_64_gnu" },
+    { name = "windows_x86_64_gnullvm" },
+    { name = "windows_x86_64_msvc" },
+    { name = "zune-core" },
+    { name = "zune-jpeg" },
+]
+
+skip-tree = []
+
+# Уязвимости
+[advisories]
+yanked       = "deny"
+unmaintained = "all"
+unsound      = "all"
+ignore       = [
+    { id = "RUSTSEC-2024-0436", reason = "transitive via image crate, no direct impact on GLOS" },
+]
+
+# Лицензии
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "BSL-1.0",
+    "OFL-1.1",
+    # Требуется для epaint_default_fonts (встроенные шрифты egui)
+    "Ubuntu-font-1.0",
+    "NCSA",
+    "CC0-1.0",
+]
+private = { ignore = true }
+
+# Источники
+[sources]
+unknown-git       = "deny"
+unknown-registry  = "deny"
+required-git-spec = "rev"
+
+allow-git = []
+
+[sources.allow-org]
+github = []

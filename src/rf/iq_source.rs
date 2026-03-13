@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use num_complex::Complex32;
 
 use crate::rf::{
@@ -12,10 +14,16 @@ pub trait IqSource: Send + Sync {
     fn config(&self) -> &RfConfig;
 
     /// Read the next block of `n` samples.
-    fn read_block(&mut self, n: usize) -> RfResult<IqBlock>;
+    fn read_block(
+        &mut self,
+        n: usize,
+    ) -> RfResult<IqBlock>;
 
     /// Seek to a sample offset (optional; file sources support this).
-    fn seek(&mut self, _sample_offset: u64) -> RfResult<()> {
+    fn seek(
+        &mut self,
+        _sample_offset: u64,
+    ) -> RfResult<()> {
         Err(RfError::Sdr("seek not supported by this source".into()))
     }
 
@@ -32,9 +40,10 @@ pub struct IqBlock {
     pub samples: Vec<Complex32>,
 
     /// Config that was active when this block was captured.
-    pub config: RfConfig,
+    pub config: Arc<RfConfig>,
 
-    /// Sample index of the first sample in this block (monotonically increasing).
+    /// Sample index of the first sample in this block (monotonically
+    /// increasing).
     pub start_sample: u64,
 }
 
