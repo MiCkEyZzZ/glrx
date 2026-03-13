@@ -4,10 +4,14 @@
 glrx
 ├── docs
 │   ├── ARCHITECTURE.md
-│   ├── QUICK_START.md
+│   ├── DSP.md
 │   ├── INTEGRATION.md
-│   ├── CONTRIBUTING.md
-│   └── ROADMAP.md
+│   ├── NAVIGATION.md
+│   ├── PIPELINE.md
+│   ├── PROJECT_STRUCTURE.md
+│   ├── QUICK_START.md
+│   ├── ROADMAP.md
+│   └── TRACKING.md
 ├── examples                       # примеры использования ресивера
 ├── scripts                        # вспомогательные скрипты (сборка, тесты)
 ├── src
@@ -75,8 +79,25 @@ glrx
 │   │   └── timing.rs
 │   ├── lib.rs                     # публичная библиотека
 │   └── main.rs                    # CLI / entrypoint
+├── tests
+├── .editorconfig
 ├── .gitignore
+├── AUTHOR
+├── BUGS
 ├── Cargo.lock
 ├── Cargo.toml
-└── README.md
+├── CHANGELOG
+├── clippy.toml
+├── CODE_OF_CONDUCT.md
+├── CONTRIBUTING.md
+├── deny.toml
+├── INSTALL
+├── LICENSE.APACHE
+├── LICENSE.MIT
+├── Makefile
+├── README.md
+├── rust-toolchain.toml
+├── rustfmt.toml
+├── SECURITY.md
+└── taplo.tomls
 ```
