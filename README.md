@@ -4,7 +4,7 @@
 ![Status](https://img.shields.io/badge/status-pre--alpha-yellow)
 
 **GLRX** is a modular GNSS receiver written in Rust, designed for research and
-engineering experiments with satellite navigation signals such as GPS, GLONASS,
+engineering experiments with satellite navigation signals such as GLONASS, GPS,
 and other GNSS constellations.
 
 The project focuses on reproducibility, modular DSP pipelines, and integration
