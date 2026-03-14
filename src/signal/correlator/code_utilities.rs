@@ -7,8 +7,17 @@
 ///   приходит раньше).
 ///
 /// Дробные смещения обрабатываются с помощью линейной интерполяции между
-/// соседними чипами. Позиции за пределами массива обрезаются до ближайшей
-/// границы.
+/// соседними чипами.
+///
+/// Позиции за пределами массива **обрезаются до ближайшей границы**
+/// (используется *clamp*).
+///
+/// # Важно
+///
+/// Для периодических кодов GNSS (например **GPS C/A**) обычно используется
+/// **циклический сдвиг** (`index mod N`).
+/// В таких случаях wrap-around логика должна реализовываться на уровне
+/// коррелятора, а не в этой функции.
 pub fn shift_code(
     code: &[f32],
     offset_samples: f64,
@@ -17,12 +26,10 @@ pub fn shift_code(
 
     (0..n)
         .map(|i| {
-            // Нужен code[i − offset], т.е. значение, которое было на позиции
-            // (i − offset) в исходном массиве.
             let src_f = i as f64 - offset_samples;
-            let src_floor = src_f.floor() as isize;
-            let frac = (src_f - src_f.floor()) as f32;
-
+            let src_floor_f = src_f.floor();
+            let src_floor = src_floor_f as isize;
+            let frac = (src_f - src_floor_f) as f32;
             let c0 = if src_floor >= 0 && (src_floor as usize) < n {
                 code[src_floor as usize]
             } else if src_floor < 0 {
@@ -30,7 +37,6 @@ pub fn shift_code(
             } else {
                 code[n - 1]
             };
-
             let c1_idx = src_floor + 1;
             let c1 = if c1_idx >= 0 && (c1_idx as usize) < n {
                 code[c1_idx as usize]
@@ -43,4 +49,55 @@ pub fn shift_code(
             c0 * (1.0 - frac) + c1 * frac
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shift_zero_offset() {
+        let code = vec![1.0, 2.0, 3.0, 4.0];
+        let shifted = shift_code(&code, 0.0);
+
+        assert_eq!(shifted, code);
+    }
+
+    #[test]
+    fn test_shift_integer_delay() {
+        let code = vec![1.0, 2.0, 3.0, 4.0];
+        let shifted = shift_code(&code, 1.0);
+
+        assert_eq!(shifted[0], 1.0);
+        assert_eq!(shifted[1], 1.0);
+        assert_eq!(shifted[2], 2.0);
+        assert_eq!(shifted[3], 3.0);
+    }
+
+    #[test]
+    fn test_shift_fractional() {
+        let code = vec![0.0, 10.0];
+        let shifted = shift_code(&code, 0.5);
+
+        // интерполяция между 0 и 10
+        assert!((shifted[1] - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_shift_negative_offset() {
+        let code = vec![1.0, 2.0, 3.0, 4.0];
+        let shifted = shift_code(&code, -1.0);
+
+        assert_eq!(shifted[0], 2.0);
+        assert_eq!(shifted[1], 3.0);
+    }
+
+    #[test]
+    fn test_shift_large_offset_clamps() {
+        let code = vec![1.0, 2.0, 3.0];
+        let shifted = shift_code(&code, 100.0);
+
+        // всё должно прижаться к границе
+        assert_eq!(shifted[0], 1.0);
+    }
 }
