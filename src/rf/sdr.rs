@@ -44,8 +44,11 @@ pub struct MockSdrSource {
 /// ```
 #[cfg(feature = "sdr")]
 pub struct SoapySource {
+    #[allow(dead_code)]
     config: Arc<RfConfig>,
+    #[allow(dead_code)]
     driver_args: String,
+    #[allow(dead_code)]
     metrics: SourceMetrics,
     // Когда будут добавлены привязки SoapySDR, сюда поместится реальный дескриптор устройства.
     // _device: soapysdr::Device,
@@ -138,7 +141,7 @@ impl SoapySource {
 
 impl IqSource for MockSdrSource {
     fn config(&self) -> &RfConfig {
-        &self.config.as_ref()
+        self.config.as_ref()
     }
 
     fn name(&self) -> &str {

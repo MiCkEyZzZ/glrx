@@ -288,7 +288,7 @@ mod tests {
 
             let phase = nco.phase_rad();
 
-            assert!(phase >= 0.0 && phase < TAU);
+            assert!((0.0..TAU).contains(&phase));
         }
     }
 
