@@ -24,7 +24,6 @@ pub struct Mixer {
 }
 
 impl Nco {
-    /// Создаёт NCO на частоте `freq_hz` для заданной частоты дискретизации
     pub fn new(
         freq_hz: f64,
         sample_rate_hz: f64,
@@ -43,7 +42,6 @@ impl Nco {
         self.phase_step = (TAU as f64 * freq_hz / sample_rate_hz) as f32;
     }
 
-    /// Возвращает текущий выходной сигнал NCO и сдвигает фазовый аккумулятор.
     #[inline(always)]
     pub fn advance(&mut self) -> Complex32 {
         let (sin, cos) = self.phase.sin_cos();
@@ -71,7 +69,6 @@ impl Nco {
         self.phase = 0.0;
     }
 
-    /// Генерирует `n` последовательных выборок NCO.
     pub fn generate(
         &mut self,
         n: usize,
@@ -81,7 +78,6 @@ impl Nco {
 }
 
 impl Mixer {
-    /// Создаёт новый микшер на частоте `freq_hz`.
     pub fn new(
         freq_hz: f64,
         sample_rate_hz: f64,
@@ -92,7 +88,6 @@ impl Mixer {
         }
     }
 
-    /// Обновляет частоту смешивания без разрыва фазы.
     pub fn set_frequency(
         &mut self,
         freq_hz: f64,
@@ -100,7 +95,6 @@ impl Mixer {
         self.nco.set_frequency(freq_hz, self.sample_rate_hz);
     }
 
-    /// Регулирует частоту на величину дельты.
     pub fn adjust_frequency(
         &mut self,
         delta_hz: f64,
@@ -111,17 +105,14 @@ impl Mixer {
         self.nco.set_frequency(new_freq, self.sample_rate_hz);
     }
 
-    /// Настраивает частоту дискретизации.
     pub fn sample_rate(&self) -> f64 {
         self.sample_rate_hz
     }
 
-    /// Текущая фаза NCO в радианах.
     pub fn phase_rad(&self) -> f32 {
         self.nco.phase_rad()
     }
 
-    /// Смешиваем `input` с NCO, возвращая новый выделенный `Vec`.
     pub fn mix(
         &mut self,
         input: &[Complex32],
@@ -129,7 +120,6 @@ impl Mixer {
         input.iter().map(|&s| s * self.nco.advance()).collect()
     }
 
-    /// Смешиваем `input` с NCO, возвращая новый выделенный `Vec`.
     pub fn mix_inplace(
         &mut self,
         samples: &mut [Complex32],
@@ -139,16 +129,11 @@ impl Mixer {
         }
     }
 
-    /// Сброс фазового аккумулятора до нуля.
     pub fn reset(&mut self) {
         self.nco.reset();
     }
 }
 
-/// Однократное изменение частоты блока IQ.
-///
-/// Начинается с фазы = 0 и **не** является непрерывным между вызовами.
-/// Используйте [`Mixer`] для потоковой передачи.
 pub fn mix_shift(
     input: &[Complex32],
     freq_hz: f64,
@@ -159,7 +144,6 @@ pub fn mix_shift(
     input.iter().map(|&s| s * nco.advance()).collect()
 }
 
-/// Генерирует комплексный несущий тон на частоте `freq_hz`.
 pub fn generate_carrier(
     freq_hz: f64,
     sample_rate_hz: f64,
@@ -605,5 +589,35 @@ mod tests {
         let input = generate_carrier(1_000.0, FS, 5_000);
         let out = mix_shift(&input, 2_000.0, FS);
         assert_eq!(out.len(), input.len());
+    }
+
+    #[test]
+    fn mix_shift_always_starts_from_zero_phase() {
+        let input = generate_carrier(5_000.0, FS, 64);
+        let out1 = mix_shift(&input, -5_000.0, FS);
+        let out2 = mix_shift(&input, -5_000.0, FS);
+        // Same input + same phase start → identical output
+        for (a, b) in out1.iter().zip(out2.iter()) {
+            assert_eq!(a, b);
+        }
+    }
+
+    #[test]
+    fn mix_shift_shifts_tone_to_dc() {
+        let tone = generate_carrier(7_000.0, FS, 2048);
+        let out = mix_shift(&tone, -7_000.0, FS);
+        for s in &out {
+            assert!((s.re - 1.0).abs() < 1e-3, "re={}", s.re);
+        }
+    }
+
+    #[test]
+    fn generate_carrier_length_and_unit_amplitude() {
+        let carrier = generate_carrier(1_575_420_000.0, FS, 2048);
+        assert_eq!(carrier.len(), 2048);
+        for s in &carrier {
+            let mag = (s.re * s.re + s.im * s.im).sqrt();
+            assert!((mag - 1.0).abs() < 1e-4);
+        }
     }
 }
