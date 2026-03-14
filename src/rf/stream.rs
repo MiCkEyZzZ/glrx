@@ -1,12 +1,13 @@
 use std::{
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     time::{Duration, Instant},
 };
 
 use num_complex::Complex32;
+use parking_lot::Mutex;
 
 use crate::{IqBlock, IqSource, RfConfig, RfError, RfResult, SourceMetrics};
 
@@ -173,7 +174,7 @@ impl StreamProducer {
                     let t = self.buf.tail.load(Ordering::Acquire);
 
                     {
-                        let mut slot = self.buf.slots[t].lock().unwrap();
+                        let mut slot = self.buf.slots[t].lock();
 
                         *slot = None;
                     }
@@ -212,7 +213,7 @@ impl StreamProducer {
         let h = self.buf.head.load(Ordering::Acquire);
 
         {
-            let mut slot = self.buf.slots[h].lock().unwrap();
+            let mut slot = self.buf.slots[h].lock();
 
             *slot = Some(Slot {
                 samples: samples.to_vec(),
@@ -278,7 +279,6 @@ impl StreamConsumer {
         let t = self.buf.tail.load(Ordering::Acquire);
         let slot = self.buf.slots[t]
             .lock()
-            .unwrap()
             .take()
             .expect("slot should contain data");
 
@@ -322,7 +322,7 @@ impl IqStream {
     ///
     /// - [`StreamProducer`] — используется источником данных
     /// - [`StreamConsumer`] — используется DSP pipeline
-    pub fn new(
+    pub fn create(
         config: SharedRfConfig,
         capacity: usize,
         slot_size: usize,
@@ -347,7 +347,7 @@ impl IqStream {
 
 impl IqSource for StreamConsumer {
     fn config(&self) -> &RfConfig {
-        &self.buf.config.as_ref()
+        self.buf.config.as_ref()
     }
 
     fn name(&self) -> &str {
@@ -427,7 +427,7 @@ mod tests {
         capacity: usize,
         policy: OverflowPolicy,
     ) -> (StreamProducer, StreamConsumer) {
-        IqStream::new(Arc::new(RfConfig::default()), capacity, SLOT, policy)
+        IqStream::create(Arc::new(RfConfig::default()), capacity, SLOT, policy)
     }
 
     #[test]

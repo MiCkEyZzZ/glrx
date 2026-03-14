@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use crate::rf::error::{RfError, RfResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,8 +17,12 @@ impl SampleFormat {
             SampleFormat::F32 => 8,
         }
     }
+}
 
-    pub fn from_str(s: &str) -> RfResult<Self> {
+impl FromStr for SampleFormat {
+    type Err = RfError;
+
+    fn from_str(s: &str) -> RfResult<Self> {
         match s.to_ascii_lowercase().as_str() {
             "i8" | "sc8" | "int8" => Ok(Self::I8),
             "i16" | "sc16" | "int16" => Ok(Self::I16),

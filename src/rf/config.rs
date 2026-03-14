@@ -72,6 +72,13 @@ impl Default for RfConfig {
 mod tests {
     use super::*;
 
+    fn cfg_with_rate(rate: f64) -> RfConfig {
+        RfConfig {
+            sample_rate_hz: rate,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_rf_config_default_are_valid() {
         RfConfig::default()
@@ -89,14 +96,11 @@ mod tests {
 
     #[test]
     fn test_rf_config_validate_errors() {
-        let mut cfg = RfConfig::default();
-
-        cfg.sample_rate_hz = 0.0;
+        let cfg = cfg_with_rate(0.0);
 
         assert!(cfg.validate().is_err());
 
-        cfg.sample_rate_hz = 2_048_000.0;
-        cfg.center_freq_hz = 0.0;
+        let cfg = cfg_with_rate(0.0);
 
         assert!(cfg.validate().is_err());
     }
