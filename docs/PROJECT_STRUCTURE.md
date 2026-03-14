@@ -58,9 +58,15 @@ glrx
 │   │   ├── sdr.rs
 │   │   └── stream.rs
 │   ├── signal                     # базовая обработка сигналов (DSP)
-│   │   ├── mod.rs
-│   │   ├── mixer.rs
+│   │   ├── correlator
+│   │   │   ├── base.rs
+│   │   │   ├── code_utilities.rs
+│   │   │   ├── correlator_utils.rs
+│   │   │   ├── mod.rs
+│   │   │   └── normalisation.rs
 │   │   ├── filter.rs
+│   │   ├── mixer.rs
+│   │   ├── mod.rs
 │   │   ├── resampler.rs
 │   │   └── correlator_utils.rs    # вспомогательные DSP функции
 │   ├── solver                     # вычисление позиции / навигационное решение
