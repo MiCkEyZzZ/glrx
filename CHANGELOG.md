@@ -6,6 +6,11 @@ All notable changes to **Glrx** are documented in this file.
 
 ### Added
 
+**.github**:
+
+- добавлен CODEOWNERS
+- добавлен cargo-blacklist.txt
+
 - `IqSource` trait и `IqBlock` для унифицированного чтения IQ-сэмплов.
 - `FileSource` для чтения IQ из бинарных файлов (int8, int16, float32) с нормализацией.
 - `MockSdrSource` для тестов и CI без реального SDR.
