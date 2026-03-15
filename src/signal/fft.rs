@@ -378,4 +378,52 @@ mod tests {
 
         assert!((e.bin_to_freq(n - 1, FS) - f_neg).abs() < 1.0);
     }
+
+    #[test]
+    fn test_fftshift_moves_dc_to_centre() {
+        let n = 8;
+        let input: Vec<Complex32> = (0..n as i32)
+            .map(|k| Complex32::new(k as f32, 0.0))
+            .collect();
+        let shifted = FftEngine::fftshift(&input);
+
+        assert_eq!(shifted[n / 2].re, 0.0);
+    }
+
+    #[test]
+    fn test_fftshift_double_shift_is_identity() {
+        let n = 16;
+        let input: Vec<Complex32> = (0..n).map(|k| Complex32::new(k as f32, 0.0)).collect();
+        let shifted_twice = FftEngine::fftshift(&FftEngine::fftshift(&input));
+
+        for (a, b) in input.iter().zip(shifted_twice.iter()) {
+            assert_eq!(a, b);
+        }
+    }
+
+    #[test]
+    fn test_power_spectrum_db_length_matches_input() {
+        let mut e = FftEngine::new(256);
+        let input = vec![Complex32::new(0.5, 0.3); 256];
+
+        assert_eq!(e.power_spectrum_db(&input).len(), 256);
+    }
+
+    #[test]
+    fn test_fft_inplace_same_as_fft() {
+        let n = 64;
+        let mut e = FftEngine::new(n);
+        let input: Vec<Complex32> = (0..n)
+            .map(|i| Complex32::new((i as f32).sin(), 0.0))
+            .collect();
+        let out_alloc = e.fft(&input);
+        let mut out_inplace = input.clone();
+
+        e.fft_inplace(&mut out_inplace);
+
+        for (a, b) in out_alloc.iter().zip(out_inplace.iter()) {
+            assert!((a.re - b.re).abs() < 1e-4);
+            assert!((a.im - b.im).abs() < 1e-4);
+        }
+    }
 }
