@@ -64,11 +64,11 @@ glrx
 │   │   │   ├── correlator_utils.rs
 │   │   │   ├── mod.rs
 │   │   │   └── normalisation.rs
+│   │   ├── fft.rs
 │   │   ├── filter.rs
 │   │   ├── mixer.rs
 │   │   ├── mod.rs
-│   │   ├── resampler.rs
-│   │   └── correlator_utils.rs    # вспомогательные DSP функции
+│   │   └── resampler.rs
 │   ├── solver                     # вычисление позиции / навигационное решение
 │   │   ├── mod.rs
 │   │   ├── least_squares.rs

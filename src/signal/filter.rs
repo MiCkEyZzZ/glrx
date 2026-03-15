@@ -53,6 +53,20 @@ impl FirFilter {
         }
     }
 
+    pub fn low_pass(
+        cutoff_hz: f64,
+        sample_rate_hz: f64,
+        num_taps: usize,
+        window: Window,
+    ) -> Self {
+        assert!(cutoff_hz > 0.0 && cutoff_hz < sample_rate_hz / 2.0);
+
+        let cutoff_norm = cutoff_hz / sample_rate_hz;
+        let coeffs = design_low_pass_coeffs(cutoff_norm, num_taps, window);
+
+        Self::new(coeffs)
+    }
+
     /// Фильтрует один образец и возвращает результат.
     ///
     /// Это внутренний цикл — `apply` вызывает его для каждого входного образца.
@@ -93,6 +107,42 @@ impl FirFilter {
             *s = Complex32::default()
         }
     }
+
+    pub fn ceoffs(&self) -> &[f32] {
+        &self.coeffs
+    }
+}
+
+#[inline]
+fn sinc(x: f64) -> f64 {
+    if x.abs() < 1e-12 {
+        1.0
+    } else {
+        let px = PI * x;
+
+        px.sin() / px
+    }
+}
+
+fn design_low_pass_coeffs(
+    cutoff_norm: f64,
+    num_taps: usize,
+    window: Window,
+) -> Vec<f32> {
+    assert!(num_taps >= 1);
+    assert!(cutoff_norm > 0.0 && cutoff_norm < 0.5);
+
+    let m = (num_taps - 1) as f64 / 2.0;
+
+    (0..num_taps)
+        .map(|n| {
+            let x = n as f64 - m;
+            let h = 2.0 * cutoff_norm / sinc(2.0 * cutoff_norm * x);
+            let w = window.value(n, num_taps);
+
+            (h * w) as f32
+        })
+        .collect()
 }
 
 #[cfg(test)]
