@@ -1,3 +1,5 @@
+//! Источник IQ-данных из бинарного файла.
+
 use std::{
     fs::File,
     io::{BufReader, Seek, SeekFrom},
@@ -50,7 +52,8 @@ impl FileSource {
     /// Включить режим зацикливания: при достижении конца файла чтение
     /// продолжается с начала. Удобно для многократного воспроизведения
     /// коротких сигналов при разработке алгоритмов.
-    pub fn with_looping(mut self) -> Self {
+    #[must_use]
+    pub const fn with_looping(mut self) -> Self {
         self.looping = true;
         self
     }
@@ -59,9 +62,9 @@ impl FileSource {
     pub fn total_samples(&self) -> RfResult<u64> {
         let file = File::open(&self.path)?;
         let bytes = file.metadata()?.len();
-        let bps = self.config.format.bytes_per_sample() as u64;
+        let bps = self.config.format.bytes_per_complex_sample() as u64;
 
-        if bytes & bps != 0 {
+        if bytes % bps != 0 {
             log::warn!(
                 "file size {} is not a multiple of {} bytes per sample",
                 bytes,
@@ -234,7 +237,7 @@ impl IqSource for FileSource {
         &mut self,
         sample_offset: u64,
     ) -> RfResult<()> {
-        let byte_offset = sample_offset * self.config.format.bytes_per_sample() as u64;
+        let byte_offset = sample_offset * self.config.format.bytes_per_complex_sample() as u64;
 
         self.reader.seek(SeekFrom::Start(byte_offset))?;
         self.next_samples = sample_offset;
@@ -246,6 +249,10 @@ impl IqSource for FileSource {
         self.metrics.clone()
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Тесты
+////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod tests {

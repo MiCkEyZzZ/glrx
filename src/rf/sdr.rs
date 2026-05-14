@@ -1,3 +1,9 @@
+//! Источники IQ-данных для SDR.
+//!
+//! Модуль содержит:
+//! - `MockSdrSource` — детерминированный mock-источник для тестов и CI
+//! - `SoapySource` — аппаратный SDR через SoapySDR (за `feature = "sdr"`)
+
 use std::{f32::consts::TAU, sync::Arc};
 
 use num_complex::Complex32;
@@ -57,6 +63,7 @@ pub struct SoapySource {
 
 impl MockSdrSource {
     /// Create a new mock source.
+    #[must_use]
     pub fn new(
         config: Arc<RfConfig>,
         tone_hz: f64,
@@ -76,7 +83,8 @@ impl MockSdrSource {
     }
 
     /// Tone frequency this source was configured with.
-    pub fn tone_hz(&self) -> f64 {
+    #[must_use]
+    pub const fn tone_hz(&self) -> f64 {
         self.tone_hz
     }
 }
@@ -133,6 +141,7 @@ impl SoapySource {
     }
 
     /// Возвращает список всех устройств SoapySDR, видимых в системе.
+    #[must_use]
     pub fn enumerate() -> Vec<String> {
         // В будущем: soapysdr::enumerate("").map(|kw| kw.to_string()).collect()
         vec!["<SoapySDR enumeration not yet implemented>".to_string()]
@@ -203,6 +212,10 @@ fn pseudo_noise(mut x: u64) -> f32 {
     let lo = (x & 0xFFFF_FFFF) as i32;
     lo as f32 / i32::MAX as f32
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Тесты
+////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod tests {

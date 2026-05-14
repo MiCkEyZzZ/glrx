@@ -1,3 +1,11 @@
+//! Потоковый кольцевой буфер для IQ-данных.
+//!
+//! Модуль предоставляет:
+//! - `IqStream` — фабрику для создания пары производитель/потребитель
+//! - `StreamProducer` — запись IQ-блоков в буфер
+//! - `StreamConsumer` — чтение IQ-блоков через [`IqSource`]
+//! - `OverflowPolicy` — политику обработки переполнения буфера
+
 use std::{
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -11,46 +19,44 @@ use parking_lot::Mutex;
 
 use crate::{IqBlock, IqSource, RfConfig, RfError, RfResult, SourceMetrics};
 
+/// Разделяемая конфигурация RF-тракта.
 pub type SharedRfConfig = Arc<RfConfig>;
 
 /// Политика поведения, когда кольцевой буфер заполнен и производитель пытается
 /// записать новые данные.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverflowPolicy {
-    /// Бесшумно удалить самый старый слот (производитель никогда не
-    /// блокируется).
+    /// Бесшумно удалить самый старый слот; производитель не блокируется.
     DropOldest,
 
-    /// Вернуть [`RfError::BufferOverflow`] производителю.
+    /// Вернуть ошибку [`RfError::BufferOverflow`] производителю.
     ErrorOnOverflow,
 
-    /// Заблокировать производителя до тех пор, пока не освободится слот
-    /// (не подходит для систем реального времени).
+    /// Заблокировать производителя до освобождения слота.
+    ///
+    /// Не подходит для систем жёсткого реального времени.
     BlockProducer,
 }
 
 struct Slot {
-    /// Непосредственно IQ-выборка, хранящиеся в этом слоте.
+    /// IQ-выборки, хранящиеся в этом слоте.
     samples: Vec<Complex32>,
 
-    /// Индекс первой выборки в этом слоте.
+    /// Индекс первого сэмпла в этом слоте.
     start_sample: u64,
 
-    /// Момент времени, когда эти выборки были записаны (используется для
-    /// обнаружения разрывов).
+    /// Момент записи данных; используется для обнаружения разрывов потока.
     written_at: Instant,
 }
 
 /// Внутренняя структура кольцевого буфера.
 ///
 /// Разделяется между производителем и потребителем через [`Arc`].
-/// Хранит:
-/// - сами слоты с IQ-данными
-/// - атомарные индексы головы и хвоста
-/// - статистику потока
+/// Хранит слоты с IQ-данными, атомарные индексы головы и хвоста, а также
+/// статистику потока.
 ///
-/// Не предназначена для прямого использования — доступ осуществляется
-/// через [`StreamProducer`] и [`StreamConsumer`].
+/// Не предназначена для прямого использования; доступ осуществляется через
+/// [`StreamProducer`] и [`StreamConsumer`].
 struct SharedBuffer {
     slots: Vec<Mutex<Option<Slot>>>,
     capacity: usize,
@@ -68,6 +74,7 @@ struct SharedBuffer {
 }
 
 /// Сторона производителя кольцевого буфера.
+///
 /// Обычно принадлежит потоку захвата SDR или задаче предварительной загрузки из
 /// файла.
 pub struct StreamProducer {
@@ -75,6 +82,7 @@ pub struct StreamProducer {
 }
 
 /// Сторона потребителя кольцевого буфера.
+///
 /// Реализует [`IqSource`], поэтому может быть подключена к любому этапу
 /// конвейера обработки.
 pub struct StreamConsumer {
@@ -85,7 +93,6 @@ pub struct StreamConsumer {
 /// Фабрика для создания потокового кольцевого буфера IQ.
 ///
 /// [`IqStream`] создаёт пару:
-///
 /// - [`StreamProducer`] — записывает IQ-данные
 /// - [`StreamConsumer`] — читает IQ-данные и реализует [`IqSource`]
 ///
@@ -142,20 +149,19 @@ impl StreamProducer {
     /// `samples` копируются во внутренний слот буфера.
     ///
     /// Если буфер заполнен, поведение зависит от [`OverflowPolicy`]:
-    ///
     /// - [`OverflowPolicy::DropOldest`] — самый старый слот удаляется
     /// - [`OverflowPolicy::ErrorOnOverflow`] — возвращается ошибка
-    /// - [`OverflowPolicy::BlockProducer`] — производитель ожидает освобождения
+    /// - [`OverflowPolicy::BlockProducer`] — производитель ждёт освобождения
     ///   слота
     ///
     /// # Параметры
     ///
     /// * `samples` — IQ-выборки
-    /// * `start_sample` — индекс первой выборки
+    /// * `start_sample` — индекс первого сэмпла
     ///
     /// # Ошибки
     ///
-    /// Возвращает [`RfError::BufferOverflow`] если используется политика
+    /// Возвращает [`RfError::BufferOverflow`], если используется политика
     /// [`OverflowPolicy::ErrorOnOverflow`].
     pub fn write(
         &self,
@@ -183,7 +189,7 @@ impl StreamProducer {
                         .tail
                         .store((t + 1) % self.buf.capacity, Ordering::Release);
                     self.buf.count.fetch_sub(1, Ordering::AcqRel);
-                    log::debug!("IqStream: buffer full, dropped {} samples", dropped);
+                    log::debug!("IqStream: buffer full, dropped {dropped} samples");
                 }
                 OverflowPolicy::ErrorOnOverflow => {
                     let dropped = samples.len();
@@ -233,26 +239,29 @@ impl StreamProducer {
         Ok(())
     }
 
-    /// Возвращает кол-во приблизительное кол-во занятых слотов.
+    /// Возвращает приблизительное количество занятых слотов.
+    #[must_use]
     pub fn used_slots(&self) -> usize {
         self.buf.used_slots()
     }
 
-    /// Возвращает кол-во образцов, отброшенных из-за переполнения.
+    /// Возвращает количество сэмплов, отброшенных из-за переполнения.
+    #[must_use]
     pub fn dropped_samples(&self) -> u64 {
         self.buf.dropped.load(Ordering::Relaxed)
     }
 }
 
 impl StreamConsumer {
-    /// Возвращает кол-во слотов, доступных для чтения.
+    /// Возвращает количество слотов, доступных для чтения.
+    #[must_use]
     pub fn available_slots(&self) -> usize {
         self.buf.used_slots()
     }
 
     /// Извлекает один слот из кольцевого буфера.
     ///
-    /// Функция блокируется дотех пор, пока:
+    /// Функция блокируется до тех пор, пока:
     /// - в буфере не появятся данные, либо
     /// - не истечёт `timeout`.
     fn drain_one_slot(
@@ -319,9 +328,9 @@ impl IqStream {
     /// # Возвращает
     ///
     /// Кортеж:
-    ///
     /// - [`StreamProducer`] — используется источником данных
-    /// - [`StreamConsumer`] — используется DSP pipeline
+    /// - [`StreamConsumer`] — используется DSP-пайплайном
+    #[must_use]
     pub fn create(
         config: SharedRfConfig,
         capacity: usize,
@@ -414,6 +423,10 @@ impl IqSource for StreamConsumer {
         }
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Тесты
+////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod tests {
