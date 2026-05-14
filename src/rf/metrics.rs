@@ -1,3 +1,13 @@
+//! Метрики работы источников IQ-данных.
+//!
+//! Содержит статистику потока, включая:
+//! - количество переданных и потерянных сэмплов
+//! - разрывы потока
+//! - оценку скорости дискретизации
+//! - оценку мощности сигнала
+//!
+//! Используется совместно с [`IqSource`].
+
 /// Метрики выполнения, предоставляемые [`IqSource`].
 #[derive(Debug, Clone, Default)]
 pub struct SourceMetrics {
@@ -21,6 +31,7 @@ pub struct SourceMetrics {
 
 impl SourceMetrics {
     /// Доля потерь сэмплов
+    #[must_use]
     pub fn loss_ratio(&self) -> f64 {
         if self.total_samples == 0 {
             return 0.0;
@@ -29,6 +40,10 @@ impl SourceMetrics {
         self.dropped_samples as f64 / (self.total_samples + self.dropped_samples) as f64
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Тесты
+////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod tests {

@@ -159,3 +159,10 @@ cargo run --release --bin glrx -- \
 - Build a modular GNSS receiver implemented entirely in Rust.
 - Ensure experiment reproducibility and system extensibility.
 - Enable seamless integration with telemetry analysis and storage systems.
+
+## License
+
+This project is licensed under either of
+
+- [Apache License, Version 2.0](LICENSE.APACHE)
+- [MIT License](LICENSE.MIT)

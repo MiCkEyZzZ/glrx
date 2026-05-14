@@ -61,7 +61,7 @@ glrx
 │   │   ├── correlator
 │   │   │   ├── base.rs
 │   │   │   ├── code_utilities.rs
-│   │   │   ├── correlator_utils.rs
+│   │   │   ├── discriminators.rs
 │   │   │   ├── mod.rs
 │   │   │   └── normalisation.rs
 │   │   ├── fft.rs

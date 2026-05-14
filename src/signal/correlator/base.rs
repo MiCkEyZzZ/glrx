@@ -1,39 +1,71 @@
+//! Модуль корреляторов для обработки сигналов GNSS/DS-SS.
+//!
+//! Содержит реализацию Early-Prompt-Late (EPL) коррелятора,
+//! используемого для:
+//! - оценки ошибки синхронизации кода (DLL)
+//! - оценки фазы/частоты несущей (PLL/FLL)
+//!
+//! Основной алгоритм — накопление комплексной корреляции между
+//! входным сигналом и локальными репликами псевдослучайного кода.
+//!
+//! # Термины
+//!
+//! - Early — опережающая копия кода (−Δτ)
+//! - Prompt — синхронная копия (0)
+//! - Late — запаздывающая копия (+Δτ)
+//!
+//! # Примечание
+//!
+//! Ожидается, что входной сигнал уже:
+//! - переведён в базовую полосу (carrier wiped-off)
+//! - синхронизирован по частоте
+//! - разбит на интервалы интеграции (например, 1 ms для GPS)
+
 use num_complex::Complex32;
 
 use crate::EplOutput;
 
-/// Коррелирует `signal` с одной репликой кода.
+/// Выполняет EPL-корреляцию за один интервал интеграции.
 ///
-/// Возвращает когерентную сумму `Σ signal[n] · code[n]`.
+/// # Алгоритм
+/// Для каждого сэмпла вычисляется:
+/// ```text
+/// E += s[n] * code_early[n]
+/// P += s[n] * code_prompt[n]
+/// L += s[n] * code_late[n]
+/// ```
 ///
-/// Оба среза усекаются до `min(signal.len(), code.len())`.
-#[inline]
-pub fn correlator(
-    signal: &[Complex32],
-    code: &[f32],
-) -> Complex32 {
-    signal.iter().zip(code.iter()).map(|(&s, &c)| s * c).sum()
-}
-
-/// Коррелятор типа Early-Prompt-Late (EPL).
+/// # Требования
+/// - Все входные массивы должны иметь одинаковую длину
+/// - `signal` должен быть уже с удалённой несущей
 ///
-/// Вычисляет три корреляции за один проход по `signal`.
-///
-/// # Аргументы
-///
-/// * `signal` — IQ-сэмплы с удалённой несущей за один период интеграции.
-/// * `code_early` / `code_prompt` / `code_late` — заранее сгенерированные
-///   реплики кода для трёх смещений чипа. Генерируются с помощью
-///   [`shift_code`].
+/// # Возвращает
+/// Комплексные значения корреляции для Early, Prompt и Late каналов
+#[must_use]
 pub fn correlator_epl(
     signal: &[Complex32],
     code_early: &[f32],
     code_prompt: &[f32],
     code_late: &[f32],
 ) -> EplOutput {
+    let mut e = Complex32::default();
+    let mut p = Complex32::default();
+    let mut l = Complex32::default();
+
+    for (((&s, &ce), &cp), &cl) in signal
+        .iter()
+        .zip(code_early)
+        .zip(code_prompt)
+        .zip(code_late)
+    {
+        e += s * ce;
+        p += s * cp;
+        l += s * cl;
+    }
+
     EplOutput {
-        early: correlator(signal, code_early),
-        prompt: correlator(signal, code_prompt),
-        late: correlator(signal, code_late),
+        early: e,
+        prompt: p,
+        late: l,
     }
 }

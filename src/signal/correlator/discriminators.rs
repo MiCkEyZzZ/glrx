@@ -1,3 +1,42 @@
+//! Модуль корреляции GNSS: Early–Prompt–Late (EPL) и дискриминаторы.
+//!
+//! Содержит:
+//!
+//! * [`EplOutput`] — результат корреляции за один интервал интеграции
+//! * DLL-дискриминаторы (кодовая петля):
+//!   * Normalised Early-Late Power (NELP)
+//!   * Early-Late Envelope (ELE)
+//! * PLL-дискриминаторы (несущая):
+//!   * atan2 discriminator
+//!   * Decision-Directed atan
+//!
+//! # Контекст использования
+//!
+//! Модуль применяется в tracking-контуре GNSS-приёмника после этапа:
+//!
+//! ```text
+//! RF → downconversion → correlator → EPL → DLL/PLL
+//! ```
+//!
+//! Где:
+//!
+//! * входной сигнал уже приведён к базовой полосе (baseband)
+//! * выполнена когерентная интеграция (обычно 1 ms для GPS L1 C/A)
+//!
+//! # Назначение EPL
+//!
+//! Early–Prompt–Late коррелятор используется для оценки:
+//!
+//! * ошибки задержки кода (DLL)
+//! * ошибки фазы несущей (PLL)
+//!
+//! # Замечания по устойчивости
+//!
+//! * `dll_nelp` устойчив к изменению амплитуды сигнала (нормирован)
+//! * `dll_ele` чувствителен к уровню сигнала
+//! * `pll_atan2` требует известного навигационного бита
+//! * `pll_dd_atan` устраняет 180° неоднозначность
+
 use num_complex::Complex32;
 
 /// Результат одного интервала корреляции Early–Prompt–Late.
@@ -50,6 +89,7 @@ impl EplOutput {
     ///
     /// Это наиболее распространённый DLL-дискриминатор
     /// в GNSS-приёмниках.
+    #[must_use]
     pub fn dll_nelp(&self) -> f32 {
         let pe = self.early.norm_sqr();
         let pl = self.late.norm_sqr();
@@ -72,6 +112,7 @@ impl EplOutput {
     ///
     /// В отличие от `dll_nelp`, этот дискриминатор **не нормирован**
     /// по мощности и поэтому зависит от амплитуды сигнала.
+    #[must_use]
     pub fn dll_ele(&self) -> f32 {
         self.early.norm() - self.late.norm()
     }
@@ -94,6 +135,7 @@ impl EplOutput {
     ///
     /// Требует известного навигационного бита
     /// (иначе возникает неоднозначность 180°).
+    #[must_use]
     pub fn pll_atan2(&self) -> f32 {
         self.prompt.im.atan2(self.prompt.re)
     }
@@ -115,6 +157,7 @@ impl EplOutput {
     /// Устраняет неоднозначность 180° навигационного бита,
     /// поэтому часто используется для BPSK сигналов
     /// (например GPS L1 C/A).
+    #[must_use]
     pub fn pll_dd_atan(&self) -> f32 {
         let i = self.prompt.re;
         let q = self.prompt.im;
@@ -127,20 +170,27 @@ impl EplOutput {
     /// ```text
     /// |P|²
     /// ```
+    #[must_use]
     pub fn prompt_power(&self) -> f32 {
         self.prompt.norm_sqr()
     }
 
     /// In-phase компонент prompt-ветви (I).
-    pub fn prompt_i(&self) -> f32 {
+    #[must_use]
+    pub const fn prompt_i(&self) -> f32 {
         self.prompt.re
     }
 
     /// Quadrature компонент prompt-ветви (Q).
-    pub fn prompt_q(&self) -> f32 {
+    #[must_use]
+    pub const fn prompt_q(&self) -> f32 {
         self.prompt.im
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Тесты
+////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod tests {

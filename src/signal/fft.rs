@@ -26,6 +26,7 @@ pub struct FftEngine {
 
 impl FftEngine {
     /// Создаёт новый FFT-движок для преобразований длины `size`.
+    #[must_use]
     pub fn new(size: usize) -> Self {
         assert!(size > 0, "FFT size must be positive");
 
@@ -45,11 +46,13 @@ impl FftEngine {
     }
 
     /// Размер преобразования, для которого был создан этот движок.
-    pub fn size(&self) -> usize {
+    #[must_use]
+    pub const fn size(&self) -> usize {
         self.size
     }
 
     /// Выполняет **прямое FFT** над буфером *in-place*.
+    #[must_use]
     pub fn fft_inplace(
         &mut self,
         buf: &mut [Complex32],
@@ -209,6 +212,7 @@ impl FftEngine {
 
     /// Представляет элементы спектра так, чтобы **DC-компонента оказалась в
     /// центре массива**.
+    #[must_use]
     pub fn fftshift(input: &[Complex32]) -> Vec<Complex32> {
         let n = input.len();
         let half = n / 2;
@@ -220,6 +224,10 @@ impl FftEngine {
         out
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Тесты
+////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod tests {
