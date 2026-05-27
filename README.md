@@ -1,6 +1,7 @@
 # GLRX — GNSS Receiver
 
 ![Rust](https://img.shields.io/badge/language-Rust-orange)
+[![docs.rs](https://docs.rs/glrx/badge.svg)](https://docs.rs/glrx)
 ![Status](https://img.shields.io/badge/status-pre--alpha-yellow)
 
 **GLRX** is a modular GNSS receiver written in Rust, designed for research and
