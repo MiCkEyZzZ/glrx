@@ -194,30 +194,166 @@ impl EplOutput {
 
 #[cfg(test)]
 mod tests {
-    use std::f32::consts::FRAC_PI_2;
+    use std::f32::consts::{FRAC_PI_2, PI};
 
     use super::*;
 
-    #[test]
-    fn test_dll_nelp_zero_when_equal() {
-        let epl = EplOutput {
-            early: Complex32::new(1.0, 0.0),
-            prompt: Complex32::new(1.0, 0.0),
-            late: Complex32::new(1.0, 0.0),
-        };
-
-        assert!(epl.dll_nelp().abs() < 1e-6);
+    fn epl(
+        e: f32,
+        p_re: f32,
+        p_im: f32,
+        l: f32,
+    ) -> EplOutput {
+        EplOutput {
+            early: Complex32::new(e, 0.0),
+            prompt: Complex32::new(p_re, p_im),
+            late: Complex32::new(l, 0.0),
+        }
     }
 
     #[test]
-    fn test_dll_nelp_positive_when_early_stronger() {
-        let epl = EplOutput {
-            early: Complex32::new(2.0, 0.0),
-            prompt: Complex32::new(1.0, 0.0),
-            late: Complex32::new(1.0, 0.0),
-        };
+    fn test_dll_nelp_zero_when_equal() {
+        let out = epl(1.0, 1.0, 0.0, 1.0);
 
-        assert!(epl.dll_nelp() > 0.0);
+        assert!(out.dll_nelp().abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_dll_nelp_positive_early_stronger() {
+        let out = epl(2.0, 1.0, 0.0, 1.0);
+
+        assert!(out.dll_nelp() > 0.0);
+    }
+
+    #[test]
+    fn test_dll_nelp_negative_late_stronger() {
+        let out = epl(1.0, 1.0, 0.0, 2.0);
+
+        assert!(out.dll_nelp() < 0.0);
+    }
+
+    #[test]
+    fn test_dll_nelp_range_bounded() {
+        // |NELP| ≤ 1 по определению
+        let out = epl(10.0, 1.0, 0.0, 0.0);
+        let d = out.dll_nelp();
+
+        assert!(d >= -1.0 && d <= 1.0, "NELP out of range: {}", d);
+    }
+
+    #[test]
+    fn test_dll_nelp_zero_signal_no_panic() {
+        let out = epl(0.0, 0.0, 0.0, 0.0);
+
+        assert_eq!(out.dll_nelp(), 0.0);
+    }
+
+    #[test]
+    fn test_dll_nelp_symmetric() {
+        // NELP(E=a, L=b) = -NELP(E=b, L=a)
+        let out1 = epl(3.0, 1.0, 0.0, 1.0);
+        let out2 = epl(1.0, 1.0, 0.0, 3.0);
+
+        assert!((out1.dll_nelp() + out2.dll_nelp()).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_dll_ele_zero_when_equal() {
+        let out = epl(2.0, 1.0, 0.0, 2.0);
+
+        assert!(out.dll_ele().abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_dll_ele_positive_early_stronger() {
+        let out = epl(3.0, 1.0, 0.0, 1.0);
+
+        assert!(out.dll_ele() > 0.0);
+    }
+
+    #[test]
+    fn test_pll_atan2_locked() {
+        // Синхронизировано → prompt вещественный положительный → atan2 = 0
+        let out = epl(0.0, 10.0, 0.0, 0.0);
+
+        assert!(out.pll_atan2().abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_pll_atan2_quarter_phase_error() {
+        // prompt = 0 + 1j → atan2(1, 0) = π/2
+        let out = epl(0.0, 0.0, 1.0, 0.0);
+
+        assert!((out.pll_atan2() - FRAC_PI_2).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_pll_atan2_negative_bit() {
+        // Навигационный бит = −1 → prompt = −|A| + 0j → atan2 ≈ ±π
+        let out = epl(0.0, -10.0, 0.0, 0.0);
+
+        assert!(out.pll_atan2().abs() > 3.0);
+    }
+
+    #[test]
+    fn test_pll_atan2_range() {
+        for i in 0..16 {
+            let angle = i as f32 * PI / 8.0;
+            let out = EplOutput {
+                early: Complex32::default(),
+                prompt: Complex32::new(angle.cos(), angle.sin()),
+                late: Complex32::default(),
+            };
+            let d = out.pll_atan2();
+
+            assert!(d > -PI - 1e-5 && d <= PI + 1e-5, "atan2={}", d);
+        }
+    }
+
+    #[test]
+    fn test_pll_dd_atan_removes_bit_ambiguity() {
+        // DD-atan должен давать ≈ 0 для обоих знаков бита при синхронизации
+        let pos = epl(0.0, 10.0, 0.0, 0.0);
+        let neg = epl(0.0, -10.0, 0.0, 0.0);
+
+        assert!(pos.pll_dd_atan().abs() < 1e-4, "pos: {}", pos.pll_dd_atan());
+        assert!(neg.pll_dd_atan().abs() < 1e-4, "neg: {}", neg.pll_dd_atan());
+        // atan2 при негативном бите → ≈ π (ошибочно без DD)
+        assert!(neg.pll_atan2().abs() > 3.0);
+    }
+
+    #[test]
+    fn test_pll_dd_atan_range() {
+        for i in 0..16 {
+            let angle = (i as f32 - 8.0) * FRAC_PI_2 / 8.0;
+            let out = EplOutput {
+                early: Complex32::default(),
+                prompt: Complex32::new(angle.cos(), angle.sin()),
+                late: Complex32::default(),
+            };
+            let d = out.pll_dd_atan();
+
+            assert!(
+                d > -FRAC_PI_2 - 1e-4 && d <= FRAC_PI_2 + 1e-4,
+                "dd_atan={}",
+                d
+            );
+        }
+    }
+
+    #[test]
+    fn test_prompt_power() {
+        let out = epl(0.0, 3.0, 4.0, 0.0); // |P|² = 25
+
+        assert!((out.prompt_power() - 25.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_prompt_i_q() {
+        let out = epl(0.0, 2.5, -1.5, 0.0);
+
+        assert!((out.prompt_i() - 2.5).abs() < 1e-6);
+        assert!((out.prompt_q() + 1.5).abs() < 1e-6);
     }
 
     #[test]
@@ -240,16 +376,5 @@ mod tests {
         };
 
         assert!((epl.pll_atan2() - FRAC_PI_2).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_prompt_power() {
-        let epl = EplOutput {
-            early: Complex32::default(),
-            prompt: Complex32::new(3.0, 4.0),
-            late: Complex32::default(),
-        };
-
-        assert!((epl.prompt_power() - 25.0).abs() < 1e-6);
     }
 }
