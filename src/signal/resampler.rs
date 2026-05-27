@@ -101,7 +101,8 @@ impl Decimator {
     pub fn new(factor: usize) -> Self {
         assert!(factor >= 2, "decimation factor must be >= 2");
 
-        let cutoff_norm = 0.45 / factor as f64;
+        // Normalised cutoff: 0.5/factor (just below the new Nyquist frequency)
+        let cutoff_norm = 0.45 / factor as f64; // slight guard band
         let coeffs = build_lp_coeffs(cutoff_norm, 63);
 
         Self::with_filter(factor, FirFilter::new(coeffs))
@@ -216,6 +217,7 @@ impl Interpolator {
     }
 }
 
+/// Build a Hamming-windows sinc LPF at normalised cutoff `fc`.
 fn build_lp_coeffs(
     fc: f64,
     num_taps: usize,
@@ -226,7 +228,7 @@ fn build_lp_coeffs(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Тесты
+// Tests
 ////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
@@ -259,6 +261,102 @@ mod tests {
 
         for s in out.iter().skip(skip) {
             assert!((s.re - 1.0).abs() < 0.02, "DC re={}", s.re);
+        }
+    }
+
+    #[test]
+    fn test_decimator_attenuates_high_freq() {
+        let mut d = Decimator::new(4);
+
+        // High-frequency tone near input Nyquist: should be attenuated
+        let n = 2048;
+        let fs = 2_048_000.0_f64;
+        let f_alias = 700_000.0_f64; // > fs / (2 * factor), must be filtered
+        let tone: Vec<Complex32> = (0..n)
+            .map(|i| {
+                let t = i as f64 / fs;
+                Complex32::new((2.0 * std::f64::consts::PI * f_alias * t).cos() as f32, 0.0)
+            })
+            .collect();
+        let out = d.decimate(&tone);
+        let skip = d.filter.group_delay_samples() / d.factor + 1;
+        let max_amp: f32 = out.iter().skip(skip).map(|s| s.norm()).fold(0.0, f32::max);
+
+        assert!(max_amp < 0.1, "alias not suppressed: max_amp={max_amp}");
+    }
+
+    #[test]
+    fn test_decimator_state_continuous_across_blocks() {
+        let input: Vec<Complex32> = (0..256)
+            .map(|n| Complex32::new((n as f32).sin(), 0.0))
+            .collect();
+        let mut d1 = Decimator::new(2);
+        let mut d2 = Decimator::new(2);
+        let full = d1.decimate(&input);
+        let p1 = d2.decimate(&input[..128]);
+        let p2 = d2.decimate(&input[128..]);
+        let split: Vec<_> = p1.iter().chain(p2.iter()).cloned().collect();
+
+        for (a, b) in full.iter().zip(split.iter()) {
+            assert!((a.re - b.re).abs() < 1e-5, "a={} b={}", a.re, b.re);
+        }
+    }
+
+    #[test]
+    fn test_decimator_output_rate() {
+        let d = Decimator::new(4);
+
+        assert_eq!(d.output_rate(2_048_000.0), 512_000.0);
+    }
+
+    #[test]
+    pub fn test_interpolator_output_length() {
+        let d = Decimator::new(4);
+
+        assert_eq!(d.output_rate(2_048_000.0), 512_000.0);
+    }
+
+    #[test]
+    fn test_interpolator_output_rate() {
+        let i = Interpolator::new(4);
+
+        assert_eq!(i.output_rate(512_000.0), 2_048_000.0);
+    }
+
+    #[test]
+    fn test_interpolator_passes_dc() {
+        let mut interp = Interpolator::new(4);
+        let dc: Vec<Complex32> = vec![Complex32::new(1.0, 0.0); 128];
+        let out = interp.interpolate(&dc);
+        // After transient, DC should be near 1.0
+        let skip = interp.filter.group_delay_samples() + 8;
+
+        for s in out.iter().skip(skip) {
+            assert!((s.re - 1.0).abs() < 0.05, "DC re={}", s.re);
+        }
+    }
+
+    #[test]
+    fn decimator_then_interpolator_round_trip_dc() {
+        // DC → decimate(2) → interpolate(2) should return ~DC in steady state.
+        // Cascaded transient budget:
+        //   dec filter (63 taps): 62 input samples → 31 dec output samples in transient
+        //   These 31 dec transient samples → 62 interp input samples
+        //   interp filter (63 taps): adds ~62 more output samples of transient
+        //   Total: ~124 interp output samples before steady state.
+        // Use 1024 input samples so there are ample steady-state output samples.
+        let mut dec = Decimator::new(2);
+        let mut interp = Interpolator::new(2);
+        let dc: Vec<Complex32> = vec![Complex32::new(1.0, 0.0); 1024];
+        let downsampled = dec.decimate(&dc);
+        let restored = interp.interpolate(&downsampled);
+        // Skip the full cascaded transient (use conservative estimate).
+        let dec_transient_in_interp_samples = (dec.filter.num_taps() - 1) * 2;
+        let interp_transient = interp.filter.num_taps() - 1;
+        let skip = dec_transient_in_interp_samples + interp_transient + 4;
+
+        for s in restored.iter().skip(skip) {
+            assert!((s.re - 1.0).abs() < 0.1, "round-trip re={}", s.re);
         }
     }
 }
