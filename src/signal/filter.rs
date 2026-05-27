@@ -175,6 +175,11 @@ impl FirFilter {
         self.coeffs.len()
     }
 
+    /// Group delay in samples: `(num_taps - 1) / 2` for a symetric filter.
+    pub fn group_delay_samples(&self) -> usize {
+        (self.coeffs.len() - 1) / 2
+    }
+
     /// Обрабатывает блок входных отсчётов.
     ///
     /// # Возвращает
@@ -210,6 +215,16 @@ impl FirFilter {
         input.iter().map(|&x| self.apply_single(x)).collect()
     }
 
+    /// Filter in-place (zero extra allocation).
+    pub fn apply_inplace(
+        &mut self,
+        buf: &mut [Complex32],
+    ) {
+        for s in buf.iter_mut() {
+            *s = self.apply_single(*s);
+        }
+    }
+
     /// Сбрасывает внутреннее состояние фильтра (линию задержки).
     ///
     /// После вызова фильтр ведёт себя так, как будто обработка начинается с
@@ -225,8 +240,14 @@ impl FirFilter {
     pub fn coeffs(&self) -> &[f32] {
         &self.coeffs
     }
+
+    /// DC gain of the filter (sum of coefficients).
+    pub fn dc_gain(&self) -> f32 {
+        self.coeffs.iter().sum()
+    }
 }
 
+/// Cardinal sine. Returns 1.0 when x == 0/
 #[inline]
 fn sinc(x: f64) -> f64 {
     if x.abs() < 1e-12 {
@@ -238,6 +259,11 @@ fn sinc(x: f64) -> f64 {
     }
 }
 
+/// Design a linear-phase low-pass FIR using the windows sinc method.
+///
+/// * `cutoff_norm` - normalised cutoff in (0, 0.5). Equal to `fc / fs`.
+/// * `num_taps` — filter length (odd values give a symmetric, linear-phase
+///   filter).
 fn design_low_pass_coeffs(
     cutoff_norm: f64,
     num_taps: usize,
@@ -247,7 +273,6 @@ fn design_low_pass_coeffs(
     assert!(cutoff_norm > 0.0 && cutoff_norm < 0.5);
 
     let m = (num_taps - 1) as f64 / 2.0;
-
     let mut coeffs: Vec<f32> = (0..num_taps)
         .map(|n| {
             let x = n as f64 - m;
@@ -260,6 +285,7 @@ fn design_low_pass_coeffs(
 
     // нормируем по DC
     let sum: f32 = coeffs.iter().sum();
+
     if sum.abs() > f32::EPSILON {
         for c in &mut coeffs {
             *c /= sum;
@@ -277,7 +303,7 @@ fn design_low_pass_coeffs(
 mod tests {
     use super::*;
 
-    // const FS: f64 = 2_048_000.0;
+    const FS: f64 = 2_048_000.0;
 
     #[test]
     fn test_rectangular_window_is_all_ones() {
@@ -313,6 +339,23 @@ mod tests {
         let center = Window::Blackman.value(len / 2, len);
 
         assert!((center - 1.0).abs() < 1e-9, "center={}", center);
+    }
+
+    #[test]
+    fn sinc_at_zero_is_one() {
+        assert!((sinc(0.0) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn sinc_at_nonzero_integers_is_zero() {
+        for k in 1..=5 {
+            assert!(
+                sinc(k as f64).abs() < 1e-10,
+                "sinc({})={}",
+                k,
+                sinc(k as f64)
+            );
+        }
     }
 
     #[test]
@@ -371,5 +414,75 @@ mod tests {
         let out = f.apply(&[Complex32::new(2.0, 0.0)]);
 
         assert!((out[0].re - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn low_pass_dc_gain_near_unity() {
+        // A well-designed LPF should pass DC with ~0 dB gain
+        let mut lpf = FirFilter::low_pass(500_000.0, FS, 63, Window::Hamming);
+        // Excite with DC (constant 1+0j) for many samples to flush transients
+        let dc: Vec<Complex32> = vec![Complex32::new(1.0, 0.0); 256];
+        let out = lpf.apply(&dc);
+        // Last sample should be near 1+0j
+        let last = out.last().unwrap();
+
+        assert!((last.re - 1.0).abs() < 0.01, "DC gain re={}", last.re);
+        assert!(last.im.abs() < 0.01, "DC gain im={}", last.im);
+    }
+
+    #[test]
+    fn low_pass_attenuates_above_cutoff() {
+        let cutoff = 500_000.0;
+        let num_taps = 127;
+        let mut lpf = FirFilter::low_pass(cutoff, FS, num_taps, Window::Blackman);
+        // Tone well above cutoff (800 kHz >> 500 kHz).
+        let f_stop = 800_000.0_f64;
+        let n = 512usize;
+        let tone: Vec<Complex32> = (0..n)
+            .map(|i| {
+                let t = i as f64 / FS;
+                Complex32::new((2.0 * std::f64::consts::PI * f_stop * t).cos() as f32, 0.0)
+            })
+            .collect();
+        let out = lpf.apply(&tone);
+        // The filter reaches steady state after (num_taps - 1) = 126 input samples.
+        // group_delay (63) is the OUTPUT delay of the peak, not the convergence point.
+        let skip = num_taps - 1;
+        let max_amp: f32 = out[skip..].iter().map(|s| s.norm()).fold(0.0_f32, f32::max);
+
+        assert!(max_amp < 0.1, "stopband amplitude={}", max_amp);
+    }
+
+    #[test]
+    fn num_taps_and_group_delay() {
+        let f = FirFilter::low_pass(100_000.0, FS, 63, Window::Hamming);
+
+        assert_eq!(f.num_taps(), 63);
+        assert_eq!(f.group_delay_samples(), 31);
+    }
+
+    #[test]
+    fn apply_inplace_equals_apply() {
+        let input: Vec<Complex32> = (0..64).map(|n| Complex32::new(n as f32, 0.0)).collect();
+        let coeffs = vec![1.0_f32 / 3.0; 3];
+        let mut f1 = FirFilter::new(coeffs.clone());
+        let mut f2 = FirFilter::new(coeffs);
+        let out_alloc = f1.apply(&input);
+        let mut out_inplace = input.clone();
+
+        f2.apply_inplace(&mut out_inplace);
+
+        for (a, b) in out_alloc.iter().zip(out_inplace.iter()) {
+            assert!((a.re - b.re).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn dc_gain_sum_of_coefficients() {
+        let coeffs = vec![0.1_f32, 0.3, 0.2, 0.3, 0.1];
+        let f = FirFilter::new(coeffs.clone());
+        let expected: f32 = coeffs.iter().sum();
+
+        assert!((f.dc_gain() - expected).abs() < 1e-6);
     }
 }
