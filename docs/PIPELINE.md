@@ -1,24 +1,24 @@
-# Конвейер приема - GLRX Pipeline
+# Reception Pipeline - GLRX Pipeline
 
-## Общая модель
+## System Overview
 
-GLRX обрабатывает сигналы через многоступенчатый конвейер.
+GGLRX processes signals through a multi-stage pipeline.
 
 ```text
 ┌─────────────┐
-│   IQ Source │  RF frontend: файл / SDR / поток
+│   IQ Source │  RF frontend: file / SDR / stream
 │  (src/rf/)  │
 └──────┬──────┘
-       │ IqBlock (raw IQ, нормализованный ±1.0)
+       │ IqBlock (raw IQ, normalized ±1.0)
        ▼
 ┌──────────────────┐
 │ Signal Processing│  mixer, filter, resampler, FFT, correlator
 │ (src/signal/)    │
 └────────┬─────────┘
-         │ SignalBlock (baseband IQ после downconversion)
+         │ SignalBlock (baseband IQ after downconversion)
          ▼
 ┌──────────────────┐
-│  Acquisition     │  PCPS поиск: PRN × Doppler grid
+│  Acquisition     │  PCPS search: PRN × Doppler grid
 │(src/acquisition/)│
 └──────┬───────────┘
        │ AcquisitionResult { prn, doppler_hz, code_phase }
@@ -55,15 +55,15 @@ GLRX обрабатывает сигналы через многоступенч
 
 ---
 
-## Данные на каждом этапе
+## Data at Each Stage
 
 ### IqBlock (RF -> Signal)
 
 ```rust
 IqBlock {
-    samples: Vec<Complex32>,  // нормализованные ±1.0 IQ-сэмплы
+    samples: Vec<Complex32>,  // normalized IQ samples in range ±1.0
     config: Arc<RfConfig>,    // fs, center_freq, format
-    start_sample: u64,        // монотонно возрастающий счётчик
+    start_sample: u64,        // monotonic sample counter
 }
 ```
 
@@ -71,10 +71,10 @@ IqBlock {
 
 ```rust
 AcquisitionResult {
-    prn: u8,           // 1–32 для GPS
-    doppler_hz: f64,   // оценка Doppler смещения
-    code_phase: usize, // начальная фаза кода в сэмплах
-    cn0_db: f32,       // оценка C/N₀
+    prn: u8,           // GPS PRN 1–32
+    doppler_hz: f64,   // estimated Doppler shift
+    code_phase: usize, // code phase in samples
+    cn0_db: f32,       // estimated C/N₀
 }
 ```
 
@@ -83,10 +83,10 @@ AcquisitionResult {
 ```rust
 Observable {
     prn: u8,
-    pseudorange: f64,   // метры (с поправками)
-    doppler: f64,       // Гц
-    cn0: f32,           // дБ-Гц
-    timestamp: f64,     // GPS time (секунды)
+    pseudorange: f64,   // meters (corrected)
+    doppler: f64,       // Hz
+    cn0: f32,           // dB-Hz
+    timestamp: f64,     // GPS time (seconds)
 }
 ```
 
@@ -94,10 +94,10 @@ Observable {
 
 ```rust
 PositionSolution {
-    lat: f64,           // градусы
+    lat: f64,           // degrees
     lon: f64,
-    alt: f64,           // метры над эллипсоидом
-    clock_bias: f64,    // метры (смещение приёмных часов)
+    alt: f64,           // meters above ellipsoid
+    clock_bias: f64,    // receiver clock offset (meters)
     hdop: f32,
     vdop: f32,
     num_satellites: u8,
@@ -106,34 +106,34 @@ PositionSolution {
 
 ---
 
-## Состояние приёмника
+## Receiver State Machine
 
 ```text
 COLD_START
     │
-    ▼ (IQ данные доступны)
+    ▼ (IQ stream available)
 ACQUIRING
     │
-    ▼ (найдено ≥ 4 спутников)
+    ▼ (≥ 4 satellites acquired)
 TRACKING
     │
-    ▼ (декодированы эфемериды)
+    ▼ (ephemeris decoded)
 NAVIGATING
     │
-    ▼ (≥ 4 Observable)
-FIXED (Position solution)
+    ▼ (≥ 4 observables)
+FIXED (position solution available)
 ```
 
 ---
 
-## Временной бюджет (GPS L1 C/A, 2.048 Msps)
+## Timing Budget (GPS L1 C/A, 2.048 Msps)
 
-| Этап                | Единица времени     | Типичная задержка     |
+| Stage               | Time Unit           | Typical Latency       |
 | ------------------- | ------------------- | --------------------- |
-| IQ capture          | 1 мс (2048 сэмплов) | realtime              |
-| Signal processing   | 1 мс                | < 1 мс                |
-| Acquisition (1 PRN) | 1–100 мс            | < 500 мс (все 32 PRN) |
-| Tracking lock       | 1–20 мс             | 5–20 мс               |
-| Nav bit sync        | 20 мс               | ~100 мс               |
-| Subframe decode     | 6 с                 | 6–30 с                |
-| Position fix        | —                   | TTFF 30–90 с cold     |
+| IQ capture          | 1 ms (2048 samples) | real-time             |
+| Signal processing   | 1 ms                | < 1 ms                |
+| Acquisition (1 PRN) | 1–100 ms            | < 500 ms (all 32 PRN) |
+| Tracking lock       | 1–20 ms             | 5–20 ms               |
+| Nav bit sync        | 20 ms               | ~100 ms               |
+| Subframe decode     | 6 s                 | 6–30 s                |
+| Position fix        | —                   | TTFF 30–90 s (cold)   |

@@ -1,19 +1,20 @@
 # Glrx CODEOWNERS
 
-# Назначение владельца (ответственного) для разных частей проекта.
+# Assigns ownership (responsibility) for different parts of the project.
 
 # ================================
-# Основной код
+# Core code
 # ================================
 /src/ @MiCkEyZzZ
 
 # ================================
 # CI/CD и GitHub
 # ================================
+/.github/ISSUE_TEMPLATE/ @MiCkEyZzZ
 /.github/pull_request_template.md @MiCkEyZzZ
 
 # ================================
-# Документация
+# Documentation
 # ================================
 /docs/ @MiCkEyZzZ
 
@@ -21,3 +22,8 @@
 # Скрипты и утилиты
 # ================================
 /Makefile @MiCkEyZzZ
+
+# ================================
+# Root files (fallback)
+# ================================
+* @MiCkEyZzZ
