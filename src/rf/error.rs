@@ -26,7 +26,7 @@ pub enum RfError {
         gap: Duration,
     },
 
-    /// Generic SDR backend error (SoapySDR / RTL-SDR).
+    /// Generic SDR backend error (`SoapySDR` / RTL-SDR).
     Sdr(String),
 
     /// Invalid RF or stream configuration.

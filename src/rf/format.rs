@@ -14,8 +14,8 @@ pub enum SampleFormat {
     /// raw mode and many GNSS signal recordings.
     I8,
 
-    /// Signed 16-bit I/Q pair (4 bytes per complex sample). Used by HackRF,
-    /// USRP, and high-dynamic-range recordings.
+    /// Signed 16-bit I/Q pair (4 bytes per complex sample). Used by `HackRF`,
+    /// `USRP`, and high-dynamic-range recordings.
     I16,
 
     /// 32-bit float I/Q pair (8 bytes per complex sample).  Used by GNSS-SDR

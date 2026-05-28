@@ -10,10 +10,10 @@ use crate::rf::{
 /// Configuration shared by all IQ sources.
 #[derive(Debug, Clone)]
 pub struct RfConfig {
-    /// Centre frequency in Hz (e.g. 1_575_420_000 for GPS L1)
+    /// Centre frequency in Hz (e.g. `1_575_420_000` for GPS L1)
     pub center_freq_hz: f64,
 
-    /// Sample rate in samples/second (e.g. 2_048_000 for 2.048 MHz)
+    /// Sample rate in samples/second (e.g. `2_048_000` for 2.048 MHz)
     pub sample_rate_hz: f64,
 
     /// Optional gain in dB. `None` means use the source default / AGC
