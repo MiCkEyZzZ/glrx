@@ -4,19 +4,16 @@
 [![docs.rs](https://docs.rs/glrx/badge.svg)](https://docs.rs/glrx)
 ![Status](https://img.shields.io/badge/status-pre--alpha-yellow)
 
-**GLRX** is a modular GNSS receiver written in Rust, designed for research and
-engineering experiments with satellite navigation signals such as GLONASS, GPS,
-and other GNSS constellations.
-
-The project focuses on reproducibility, modular DSP pipelines, and integration
-with external telemetry and analysis tools.
+**GLRX** (GNSS Layered Receiver eXperimental) is a modular GNSS receiver architecture
+implemented in Rust, focused on DSP pipelines, tracking loops, and reproducible
+navigation signal processing experiments.
 
 ## GLRX – GNSS Receiver Pipeline Overview
 
 ```mermaid
 flowchart TD
 
-A[IQ Source<br/>FileSource / SDR] --> B[Signal Layer]
+A[IQ Source<br/>File / SDR] --> B[Signal Processing]
 
 B --> C[Acquisition]
 
@@ -33,7 +30,7 @@ subgraph Signal
 B1[Mixer / NCO]
 B2[Filters]
 B3[Resampler]
-B4[Correlation Utils]
+B4[Correlator Primitives]
 
 B --> B1
 B1 --> B2
@@ -43,9 +40,9 @@ end
 
 %% Acquisition internals
 subgraph AcquisitionLayer
-C1[PRN Generator]
-C2[FFT Correlator]
-C3[Peak Detector]
+C1[PRN Code Generator]
+C2[PCPS FFT Correlator]
+C3[CFAR / Peak Detector]
 
 C --> C1
 C1 --> C2
@@ -54,10 +51,9 @@ end
 
 %% Tracking internals
 subgraph TrackingLayer
-D1[DLL]
-D2[PLL]
-D3[FLL]
-D4[Channel Manager]
+D1[Code Tracking Loop (DLL)]
+D2[Carrier Tracking Loop (PLL)]
+D3[Frequency Assist Loop (FLL)]
 
 D --> D4
 D4 --> D1
@@ -78,7 +74,7 @@ end
 
 %% Solver
 subgraph SolverLayer
-F1[Least Squares]
+F1[Weighted Least Squares (WLS)]
 F2[Kalman Filter]
 
 F --> F1
@@ -89,7 +85,7 @@ end
 subgraph OutputLayer
 G1[NMEA]
 G2[UBX]
-G3[Telemetry]
+G3[Telemetry / Observability]
 
 G --> G1
 G --> G2
