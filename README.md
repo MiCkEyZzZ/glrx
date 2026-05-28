@@ -1,12 +1,11 @@
-# GLRX — GNSS Receiver
+# GLRX — GNSS Layered Receiver
 
 ![Rust](https://img.shields.io/badge/language-Rust-orange)
 [![docs.rs](https://docs.rs/glrx/badge.svg)](https://docs.rs/glrx)
 ![Status](https://img.shields.io/badge/status-pre--alpha-yellow)
 
-**GLRX** (GNSS Layered Receiver eXperimental) is a modular GNSS receiver architecture
-implemented in Rust, focused on DSP pipelines, tracking loops, and reproducible
-navigation signal processing experiments.
+**GLRX** is a modular GNSS SDR receiver implemented in Rust, focused on
+layered DSP pipelines, satellite tracking, and navigation processing.
 
 ## Features
 
