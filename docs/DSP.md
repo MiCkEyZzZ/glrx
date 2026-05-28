@@ -11,23 +11,22 @@ Module: `src/signal/`
 
 ---
 
-## Структура модуля
+## Module Structure
 
-```text
+````text
 src/signal/
 ├── correlator/
-│   ├── base.rs             — correlator_epl() — суммирование E/P/L
-│   ├── code_utilities.rs   — shift_code(), make_epl_replicas()
-│   ├── discriminators.rs   — EplOutput, DLL/PLL дискриминаторы
+│   ├── base.rs             # correlator_epl() — E/P/L accumulation
+│   ├── code_utilities.rs   # shift_code(), make_epl_replicas()
+│   ├── discriminators.rs   # EplOutput, DLL/PLL discriminators
 │   ├── mod.rs
-│   └── normalisation.rs    — power, normalize, cn0_estimate
-├── block.rs                — SignalBlock (данные после обработки)
-├── fft.rs                  — FftEngine (FFT/IFFT, кросс-корреляция)
-├── filter.rs               — FIR-фильтр, оконные функции
-├── mixer.rs                — NCO, Mixer (carrier wipe-off)
+│   └── normalisation.rs    # power, normalize, cn0_estimate
+├── block.rs                # SignalBlock (post-processing data container)
+├── fft.rs                  # FftEngine (FFT/IFFT, cross-correlation)
+├── filter.rs              # FIR filter, window functions
+├── mixer.rs               # NCO, Mixer (carrier wipe-off)
 ├── mod.rs
-└── resampler.rs            — Decimator, Interpolator
-```
+└── resampler.rs           # Decimator, Interpolator
 
 ---
 
@@ -40,7 +39,7 @@ NCO (Numerically Controlled Oscillator) генерирует комплексн�
 
 ```text
 входной IQ → Mixer (×exp(−j·2π·f_carrier·t)) → baseband IQ
-```
+````
 
 **Ключевые свойства:**
 
@@ -48,13 +47,13 @@ NCO (Numerically Controlled Oscillator) генерирует комплексн�
 - `set_frequency()` меняет частоту без фазового скачка
 - `mix_shift()` — stateless вариант для разовых операций
 
-**Типичное применение:**
+**Typical usage:**
 
-| Операция             | freq_hz              |
-| -------------------- | -------------------- |
-| Downconversion на IF | −IF_freq             |
-| Carrier wipe-off     | −(carrier + doppler) |
-| Тестовый тон         | любая                |
+| Operation           | freq_hz              |
+| ------------------- | -------------------- |
+| Downconversion (IF) | −IF_freq             |
+| Carrier wipe-off    | −(carrier + doppler) |
+| Test tone           | arbitrary frequency  |
 
 ---
 
@@ -102,14 +101,14 @@ Interpolation:  zero-stuffing → LPF (×factor gain)
 Кэшированный план rustfft + scratch-буфер. Один экземпляр на размер FFT,
 переиспользуется многократно.
 
-| Метод                     | Описание                             |                       |                            |
-| ------------------------- | ------------------------------------ | --------------------- | -------------------------- |
-| `fft()` / `ifft()`        | Прямое/обратное ДПФ                  |                       |                            |
-| `power_spectrum()`        | `                                    | X[k]                  | ²` для каждого бина        |
-| `peak_bin()`              | Индекс бина с максимальной мощностью |                       |                            |
-| `bin_to_freq()`           | Бин → частота в Гц                   |                       |                            |
-| `cross_correlate_power()` | `                                    | IFFT(FFT(s)·FFT\*(t)) | ²` — ядро PCPS acquisition |
-| `fftshift()`              | DC в центр (как numpy.fftshift)      |                       |                            |
+| Method                    | Description                                               |
+| ------------------------- | --------------------------------------------------------- |
+| `fft()` / `ifft()`        | Forward / inverse DFT                                     |
+| `power_spectrum()`        | `\|X[k]\|^2` for each frequency bin                       |
+| `peak_bin()`              | Index of the maximum power bin                            |
+| `bin_to_freq()`           | Converts FFT bin index to frequency (Hz)                  |
+| `cross_correlate_power()` | `\|IFFT(FFT(s) · FFT*(t))\|^2` — core of PCPS acquisition |
+| `fftshift()`              | Shifts DC component to the center (like numpy.fftshift)   |
 
 **PCPS Acquisition** использует `cross_correlate_power()`:
 
@@ -158,31 +157,31 @@ offset = 0 → без изменений (Prompt-реплика)
 
 #### `normalisation.rs`
 
-| Функция                | Описание                                     |      |     |
-| ---------------------- | -------------------------------------------- | ---- | --- |
-| `compute_power()`      | `(1/N)·Σ                                     | s[n] | ²`  |
-| `compute_rms()`        | `√compute_power()`                           |      |     |
-| `normalize()`          | Привести к единичной мощности                |      |     |
-| `normalize_to_power()` | Привести к заданной мощности                 |      |     |
-| `scale()`              | Умножить на вещественный коэф.               |      |     |
-| `scale_complex()`      | Умножить на комплексный коэф. (поворот фазы) |      |     |
-| `cn0_estimate()`       | C/N₀ методом moment estimator (дБ-Гц)        |      |     |
-| `cn0_estimate_iwbp()`  | C/N₀ методом NB/WB power ratio (дБ-Гц)       |      |     |
+| Function               | Description                                      |
+| ---------------------- | ------------------------------------------------ |
+| `compute_power()`      | (1/N) \* Σ abs(s[n])^2                           |
+| `compute_rms()`        | sqrt(compute_power())                            |
+| `normalize()`          | Normalize signal to unit power                   |
+| `normalize_to_power()` | Scale signal to a target power level             |
+| `scale()`              | Multiply by a real scalar coefficient            |
+| `scale_complex()`      | Multiply by a complex coefficient (phase shift)  |
+| `cn0_estimate()`       | C/N₀ via moment estimator (dB-Hz)                |
+| `cn0_estimate_iwbp()`  | C/N₀ via narrowband/wideband power ratio (dB-Hz) |
 
 ---
 
 ### SignalBlock (`block.rs`)
 
-Блок данных **после** signal-обработки (downconversion + фильтрация), передаваемый
-в acquisition/tracking.
+A data block **after signal processing** (downconversion + filtering), passed
+to acquisition and tracking stages.
 
 ```rust
 SignalBlock {
-    samples: Vec<Complex32>,   // baseband IQ
-    sample_rate_hz: f64,       // может отличаться от исходной (децимация)
-    center_freq_hz: f64,       // несущая до downconversion
-    start_sample: u64,         // позиция в оригинальном потоке
-    applied_doppler_hz: f64,   // применённый доплеровский сдвиг
+    samples: Vec<Complex32>,   // baseband IQ samples
+    sample_rate_hz: f64,       // may differ from original (decimation/interpolation)
+    center_freq_hz: f64,       // RF carrier frequency before downconversion
+    start_sample: u64,         // position in original IQ stream
+    applied_doppler_hz: f64,   // Doppler shift applied during mixing
 }
 ```
 
@@ -218,13 +217,13 @@ let cn0 = cn0_estimate(&prompt_history, 0.001); // дБ-Гц
 
 Все измерения для блока 2048 сэмплов (1 мс при 2.048 Msps):
 
-| Операция                   | Оценка       |
-| -------------------------- | ------------ |
-| Mixer::mix (2048)          | ~5–10 мкс    |
-| FirFilter 63 taps (2048)   | ~15–30 мкс   |
-| Decimator ×4 (2048)        | ~20–40 мкс   |
-| FFT 2048                   | ~50–100 мкс  |
-| cross_correlate_power 2048 | ~150–300 мкс |
-| correlator_epl (2048)      | ~2–5 мкс     |
+| Operation                    | Estimated cost |
+| ---------------------------- | -------------- |
+| `Mixer::mix` (2048)          | ~5–10 µs       |
+| `FirFilter` 63 taps (2048)   | ~15–30 µs      |
+| `Decimator ×4` (2048)        | ~20–40 µs      |
+| `FFT` 2048                   | ~50–100 µs     |
+| `cross_correlate_power` 2048 | ~150–300 µs    |
+| `correlator_epl` (2048)      | ~2–5 µs        |
 
 Запустить бенчмарки: `cargo bench --bench dsp_benchmark`

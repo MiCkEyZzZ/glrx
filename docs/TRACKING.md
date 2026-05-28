@@ -1,15 +1,16 @@
-# Tracking Layer — Слежение за спутниками
+# Tracking Layer — Satellite Signal Tracking
 
-Модуль:
+Module:
 
 ```text
 src/tracking/
 ```
 
-## Назначение
+## Purpose
 
-Tracking-слой обеспечивает **непрерывную синхронизацию** со спутниковыми сигналами
-после этапа acquisition. Каждый спутник обрабатывается в отдельном **tracking channel**.
+The tracking layer provides continuous synchronization with satellite signals
+after the acquisition stage. Each satellite is processed in an independent tracking
+channel.
 
 ---
 
@@ -20,26 +21,26 @@ struct TrackingChannel {
     prn: u8,
     pll: Pll,              // carrier phase lock
     dll: Dll,              // code delay lock
-    fll: Fll,              // frequency lock (помогает PLL при захвате)
+    fll: Fll,              // frequency lock (assists PLL during pull-in)
     cn0_estimator: Cn0Estimator,
     state: ChannelState,
-    prompt_history: Vec<Complex32>, // для оценки C/N₀
+    prompt_history: Vec<Complex32>, // for C/N₀ estimation
 }
 ```
 
-### Состояния канала
+### Channel States
 
 ```text
 IDLE
   │ ← AcquisitionResult
   ▼
-FLL_LOCK   (частота захвачена, фаза нет)
-  │ (переход когда FLL стабилен)
+FLL_LOCK   (frequency locked, phase not yet locked)
+  │ (transition when FLL is stable)
   ▼
-PLL_LOCK   (фаза захвачена, данные читаемы)
-  │ (переход когда синхронизированы биты)
+PLL_LOCK   (phase locked, data readable)
+  │ (transition when navigation bits are synchronized)
   ▼
-BIT_SYNC   (навигационные биты декодируются)
+BIT_SYNC   (navigation bits are being decoded)
 ```
 
 ---
@@ -48,7 +49,7 @@ BIT_SYNC   (навигационные биты декодируются)
 
 ### DLL — Code Delay Lock Loop
 
-Отслеживает фазу PRN-кода.
+Tracks PRN code phase.
 
 ```text
 correlator_epl(signal, early, prompt, late)
@@ -60,38 +61,38 @@ dll_nelp() = (|E|² − |L|²) / (|E|² + |L|²)
 Loop filter (2nd order)
     │
     ▼
-Code NCO correction (сэмплов/с)
+Code NCO correction (samples/s)
 ```
 
-**Параметры:**
+**Parameters:**
 
-- `chip_spacing`: 0.1–1.0 чипа (early-late расстояние)
-- `bandwidth`: 1–5 Гц (ширина петли)
-- `order`: 2 (позиция + скорость)
+- `chip_spacing`: 0.1–1.0 chips (early-late spacing)
+- `bandwidth`: 1–5 Hz (loop bandwidth)
+- `order`: 2 (position + velocity)
 
 ### PLL — Phase Lock Loop
 
-Отслеживает фазу несущей.
+Tracks carrier phase.
 
 ```text
 epl.pll_dd_atan() = atan(Q_P / |I_P|)
     │
     ▼
-Loop filter (3rd order для высокой динамики)
+Loop filter (3rd order for high dynamics)
     │
     ▼
-Carrier NCO correction (Гц)
+Carrier NCO correction (Hz)
 ```
 
-**Параметры:**
+**Parameters:**
 
-- `bandwidth`: 10–25 Гц
-- `order`: 3 (фаза + частота + скорость частоты)
-- Используется DD-atan для устранения бит-неоднозначности
+- `bandwidth`: 10–25 Hz
+- `order`: 3 (phase + frequency + frequency rate)
+- Uses DD-atan to remove bit ambiguity
 
 ### FLL — Frequency Lock Loop
 
-Помогает PLL при первоначальном захвате.
+Assists PLL during initial acquisition.
 
 ```text
 cross_product_discriminator(P_prev, P_curr)
@@ -100,42 +101,42 @@ cross_product_discriminator(P_prev, P_curr)
 Loop filter (1st order)
     │
     ▼
-Carrier NCO (только частота, не фаза)
+Carrier NCO correction (frequency only, no phase)
 ```
 
-**Переключение FLL → PLL:**
+**FLL → PLL switching:**
 
-- FLL активен до достижения фазового lock
-- После PLL lock FLL отключается
-- При потере lock: откат к FLL (или полный реacquisition)
+- FLL is active until phase lock is achieved
+- After PLL lock, FLL is disabled
+- On lock loss: fallback to FLL (or full reacquisition)
 
 ---
 
 ## C/N₀ Estimation
 
 ```rust
-// Накапливаем 20 prompt-значений (20 мс)
+// Accumulate 20 prompt samples (20 ms)
 prompt_history.push(epl.prompt);
 if prompt_history.len() >= 20 {
     let cn0 = cn0_estimate(&prompt_history, 0.001);
-    // Типично: 35–50 дБ-Гц
+    // Typical values: 35–50 dB-Hz
 }
 ```
 
-**Пороговые значения:**
+**Thresholds:**
 
-- `> 40 дБ-Гц` — надёжный PLL lock
-- `35–40 дБ-Гц` — нестабильный PLL, возможна потеря
-- `< 35 дБ-Гц` — потеря lock, нужен реacquisition
+- `> 40 дБ-Гц` — reliable PLL lock
+- `35–40 дБ-Гц` — unstable lock, possible loss
+- `< 35 дБ-Гц` — lock loss, reacquisition required
 
 ---
 
 ## Multi-Channel
 
-Приёмник поддерживает N параллельных каналов (8/16/32).
+The receiver supports N parallel channels (8/16/32).
 
 ```text
-IqBlock (2048 сэмплов, 1 мс)
+IqBlock (2048 samples, 1 ms)
     │
     ├─→ Channel[G01]: correlator_epl → DLL/PLL
     ├─→ Channel[G05]: correlator_epl → DLL/PLL
@@ -143,13 +144,13 @@ IqBlock (2048 сэмплов, 1 мс)
     └─→ Channel[G20]: correlator_epl → DLL/PLL
 ```
 
-Параллельная обработка каналов через Rayon или tokio::task::spawn_blocking.
+Parallel processing via Rayon or tokio::task::spawn_blocking.
 
 ---
 
 ## Loop Filter Design
 
-Типичный 2nd-order DLL фильтр:
+Typical 2nd-order DLL filter:
 
 ```text
 bandwidth = 2 Hz, damping = 0.707
@@ -161,15 +162,15 @@ bandwidth = 2 Hz, damping = 0.707
 y[k] = y[k-1] + (τ_2/τ_1 + T/τ_1) * e[k] - τ_2/τ_1 * e[k-1]
 ```
 
-где `T = 0.001 с` (период интеграции), `e[k]` — выход дискриминатора.
+where `T = 0.001 с` (integration period), `e[k]` is discriminator output.
 
 ---
 
-## Файловая структура (планируемая)
+## Planned File Structure
 
 ```text
 src/tracking/
-├── mod.rs          — экспорты, TrackingState
+├── mod.rs          — exports, TrackingState
 ├── channel.rs      — TrackingChannel, ChannelState
 ├── dll.rs          — Dll struct, loop filter
 ├── pll.rs          — Pll struct, loop filter
