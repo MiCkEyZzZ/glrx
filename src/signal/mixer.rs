@@ -583,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn nco_phase_wrap_high_frequency() {
+    fn test_nco_phase_wrap_high_frequency() {
         let mut nco = Nco::new(FS * 2.0, FS); // freq > fs
         for _ in 0..10 {
             let s = nco.advance();
@@ -594,14 +594,14 @@ mod tests {
     }
 
     #[test]
-    fn nco_zero_samples_generate() {
+    fn test_nco_zero_samples_generate() {
         let mut nco = Nco::new(1_000.0, FS);
         let v = nco.generate(0);
         assert!(v.is_empty());
     }
 
     #[test]
-    fn nco_negative_frequency_behavior() {
+    fn test_nco_negative_frequency_behavior() {
         let mut nco = Nco::new(-FS / 4.0, FS);
         let s0 = nco.advance();
         let s1 = nco.advance();
@@ -617,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn mixer_adjust_frequency_continuous_phase() {
+    fn test_mixer_adjust_frequency_continuous_phase() {
         let mut mixer = Mixer::new(10_000.0, FS);
         let input = generate_carrier(1_000.0, FS, 8);
         let out1 = mixer.mix(&input);
@@ -631,7 +631,7 @@ mod tests {
     }
 
     #[test]
-    fn mixer_reset_after_adjust_frequency() {
+    fn test_mixer_reset_after_adjust_frequency() {
         let mut mixer = Mixer::new(5_000.0, FS);
         mixer.adjust_frequency(10_000.0);
         mixer.reset();
@@ -639,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn mixer_zero_input_is_safe() {
+    fn test_mixer_zero_input_is_safe() {
         let mut mixer = Mixer::new(1_000.0, FS);
         let input: Vec<Complex32> = vec![];
         let out = mixer.mix(&input);
@@ -647,7 +647,7 @@ mod tests {
     }
 
     #[test]
-    fn mixer_large_block_mix() {
+    fn test_mixer_large_block_mix() {
         let input = generate_carrier(10_000.0, FS, 10_000);
         let mut mixer = Mixer::new(-10_000.0, FS);
         let out = mixer.mix(&input);
@@ -658,7 +658,7 @@ mod tests {
     }
 
     #[test]
-    fn mix_shift_phase_starts_zero_each_call() {
+    fn test_mix_shift_phase_starts_zero_each_call() {
         let input = vec![Complex32::new(1.0, 0.0); 3];
         let out1 = mix_shift(&input, FS / 4.0, FS);
         let out2 = mix_shift(&input, FS / 4.0, FS);
@@ -668,7 +668,7 @@ mod tests {
     }
 
     #[test]
-    fn mix_shift_downconversion_to_dc() {
+    fn test_mix_shift_downconversion_to_dc() {
         let tone = generate_carrier(10_000.0, FS, 128);
         let out = mix_shift(&tone, -10_000.0, FS);
 
@@ -679,7 +679,7 @@ mod tests {
     }
 
     #[test]
-    fn mix_shift_upconversion() {
+    fn test_mix_shift_upconversion() {
         let tone = generate_carrier(5_000.0, FS, 64);
         let out = mix_shift(&tone, 10_000.0, FS);
         let expected = generate_carrier(15_000.0, FS, 64);
@@ -691,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn mix_shift_zero_frequency_identity() {
+    fn test_mix_shift_zero_frequency_identity() {
         let input = generate_carrier(3_000.0, FS, 32);
         let out = mix_shift(&input, 0.0, FS);
         for (a, b) in input.iter().zip(out.iter()) {
@@ -701,14 +701,14 @@ mod tests {
     }
 
     #[test]
-    fn mix_shift_large_block() {
+    fn test_mix_shift_large_block() {
         let input = generate_carrier(1_000.0, FS, 5_000);
         let out = mix_shift(&input, 2_000.0, FS);
         assert_eq!(out.len(), input.len());
     }
 
     #[test]
-    fn mix_shift_always_starts_from_zero_phase() {
+    fn test_mix_shift_always_starts_from_zero_phase() {
         let input = generate_carrier(5_000.0, FS, 64);
         let out1 = mix_shift(&input, -5_000.0, FS);
         let out2 = mix_shift(&input, -5_000.0, FS);
@@ -719,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn mix_shift_shifts_tone_to_dc() {
+    fn test_mix_shift_shifts_tone_to_dc() {
         let tone = generate_carrier(7_000.0, FS, 2048);
         let out = mix_shift(&tone, -7_000.0, FS);
         for s in &out {
@@ -728,7 +728,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_carrier_length_and_unit_amplitude() {
+    fn test_generate_carrier_length_and_unit_amplitude() {
         let carrier = generate_carrier(1_575_420_000.0, FS, 2048);
         assert_eq!(carrier.len(), 2048);
         for s in &carrier {
