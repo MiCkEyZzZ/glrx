@@ -7,43 +7,36 @@ use crate::rf::{
     format::SampleFormat,
 };
 
-/// Конфигурация RF-фронтенда для захвата и воспроизведения IQ-данных.
-///
-/// Определяет ключевые параметры обработки сигнала: частоту, дискретизацию,
-/// усиление и формат входных отсчётов.
+/// Configuration shared by all IQ sources.
 #[derive(Debug, Clone)]
 pub struct RfConfig {
-    /// Центральная частота в Гц (например, `1_575_420_000.0` для GPS L1).
+    /// Centre frequency in Hz (e.g. 1_575_420_000 for GPS L1)
     pub center_freq_hz: f64,
 
-    /// Частота дискретизации в отсчётах в секунду (например, `2_048_000.0` =
-    /// 2.048 `МГц`).
+    /// Sample rate in samples/second (e.g. 2_048_000 for 2.048 MHz)
     pub sample_rate_hz: f64,
 
-    /// Усиление в дБ.
-    ///
-    /// `None` означает использование автоматической регулировки усиления (AGC)
-    /// или значения по умолчанию устройства.
+    /// Optional gain in dB. `None` means use the source default / AGC
     pub gain_db: Option<f64>,
 
-    /// Формат входных IQ-отсчётов.
+    /// Wire format of incoming samples
     pub format: SampleFormat,
 }
 
 impl RfConfig {
-    /// Оценка полосы пропускания (по Найквисту).
+    /// Nyquist bandwidth in Hz
     #[must_use]
     pub fn bandwidth_hz(&self) -> f64 {
         self.sample_rate_hz / 2.0
     }
 
-    /// Период одного отсчёта в секундах.
+    /// Duration of a single sample in seconds
     #[must_use]
     pub fn sample_period_s(&self) -> f64 {
         1.0 / self.sample_rate_hz
     }
 
-    /// Количество комплексных отсчётов в заданной длительности.
+    /// Number of samples in `duration`.
     #[must_use]
     pub fn samples_in(
         &self,
@@ -52,10 +45,7 @@ impl RfConfig {
         (self.sample_rate_hz * duration.as_secs_f64()) as usize
     }
 
-    /// Проверка корректности конфигурации.
-    ///
-    /// Возвращает ошибку, если параметры некорректны (например, нулевая
-    /// частота).
+    /// Validate configuration fields
     pub fn validate(&self) -> RfResult<()> {
         if self.sample_rate_hz <= 0.0 {
             return Err(RfError::Config(format!(
@@ -76,6 +66,7 @@ impl RfConfig {
 }
 
 impl Default for RfConfig {
+    /// GPS L1 C/A defaults: 1575.42 MHz, 2.048 Msps, I8.
     fn default() -> Self {
         Self {
             center_freq_hz: 1_575_420_000.0,

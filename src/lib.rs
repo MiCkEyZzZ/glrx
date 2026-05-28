@@ -1,4 +1,10 @@
+//! GLRX - GNSS software-defined receiver.
 //!
+//! # Pipeline overview
+//!
+//! ```text
+//! IqSource → Signal → Acquisition → Tracking → Navigation → Solver → Output
+//! ```
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]

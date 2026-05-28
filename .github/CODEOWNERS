@@ -8,7 +8,7 @@
 /src/ @MiCkEyZzZ
 
 # ================================
-# CI/CD и GitHub
+# CI/CD and GitHub
 # ================================
 /.github/ISSUE_TEMPLATE/ @MiCkEyZzZ
 /.github/pull_request_template.md @MiCkEyZzZ
@@ -19,7 +19,7 @@
 /docs/ @MiCkEyZzZ
 
 # ================================
-# Скрипты и утилиты
+# Scripts and utilities
 # ================================
 /Makefile @MiCkEyZzZ
 

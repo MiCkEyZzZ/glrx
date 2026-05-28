@@ -1,10 +1,35 @@
-//! Потоковый кольцевой буфер для IQ-данных.
+//! Lock-free ring buffer for streaming IQ samples between a producer thread
+//! (SDR capture / file perfetch) and consumer threads (acquisition / tracking).
 //!
-//! Модуль предоставляет:
-//! - `IqStream` — фабрику для создания пары производитель/потребитель
-//! - `StreamProducer` — запись IQ-блоков в буфер
-//! - `StreamConsumer` — чтение IQ-блоков через [`IqSource`]
-//! - `OverflowPolicy` — политику обработки переполнения буфера
+//! # Design goals
+//!
+//! | Goal | Mechanism |
+//! |------|-----------|
+//! | No heap allocation per block | Pre-allocated `Vec<Complex32>` slots |
+//! | Single-producer / single-consumer lock-free | Atomic head/tail indices |
+//! | Overflow detection | Count dropped samples, emit [`RfError::BufferOverflow`] |
+//! | Stream gap detection | Timestamp gap > threshold → [`RfError::StreamInterrupted`] |
+//! | Backpressure | `write_block` blocks or drops based on policy |
+//!
+//! # Example
+//!
+//! ```
+//! use glrx::rf::{
+//!     stream::{IqStream, OverflowPolicy},
+//!     IqSource, RfConfig,
+//! };
+//!
+//! let cfg = RfConfig::default();
+//! let (mut producer, mut consumer) = IqStream::new(cfg, 16, 2048, OverflowPolicy::DropOldest);
+//!
+//! // Producer (SDR thread):
+//! let samples = vec![num_complex::Complex32::new(0.0, 0.0); 2048];
+//! producer.write(&samples, 0).unwrap();
+//!
+//! // Consumer (pipeline thread):
+//! let block = consumer.read_block(2048).unwrap();
+//! assert_eq!(block.samples.len(), 2048);
+//! ```
 
 use std::{
     sync::{
@@ -19,94 +44,80 @@ use parking_lot::Mutex;
 
 use crate::{IqBlock, IqSource, RfConfig, RfError, RfResult, SourceMetrics};
 
-/// Разделяемая конфигурация RF-тракта.
-pub type SharedRfConfig = Arc<RfConfig>;
-
-/// Политика поведения, когда кольцевой буфер заполнен и производитель пытается
-/// записать новые данные.
+/// What to do when the ring buffer is full and a producer tries to write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverflowPolicy {
-    /// Бесшумно удалить самый старый слот; производитель не блокируется.
+    /// Silently drop the oldest slot (producer never blocks).
     DropOldest,
 
-    /// Вернуть ошибку [`RfError::BufferOverflow`] производителю.
+    /// Return [`RfError::BufferOverflow`] to the producer.
     ErrorOnOverflow,
 
-    /// Заблокировать производителя до освобождения слота.
-    ///
-    /// Не подходит для систем жёсткого реального времени.
+    /// Block the producer until a slot is free (not suitable for real-time).
     BlockProducer,
 }
 
 struct Slot {
-    /// IQ-выборки, хранящиеся в этом слоте.
+    /// The actual IQ samples in this slot.
     samples: Vec<Complex32>,
 
-    /// Индекс первого сэмпла в этом слоте.
+    /// Sample index of the first sample in this slot.
     start_sample: u64,
 
-    /// Момент записи данных; используется для обнаружения разрывов потока.
+    /// Instant when these samples were written (for gap detection).
     written_at: Instant,
 }
 
-/// Внутренняя структура кольцевого буфера.
-///
-/// Разделяется между производителем и потребителем через [`Arc`].
-/// Хранит слоты с IQ-данными, атомарные индексы головы и хвоста, а также
-/// статистику потока.
-///
-/// Не предназначена для прямого использования; доступ осуществляется через
-/// [`StreamProducer`] и [`StreamConsumer`].
 struct SharedBuffer {
     slots: Vec<Mutex<Option<Slot>>>,
+
+    /// Ring capacity (number of slots).
     capacity: usize,
+
+    /// Slot size (samples per slot).
     slot_size: usize,
+
+    /// Write index in [0, capacity).
     head: AtomicUsize,
+
+    /// Read index in [0, capacity).
     tail: AtomicUsize,
+
+    /// Number of filled slots (authoritative occupancy counter).
     count: AtomicUsize,
+
+    // Metrics
     total_written: AtomicU64,
     total_read: AtomicU64,
     dropped: AtomicU64,
     interruptions: AtomicU64,
     policy: OverflowPolicy,
-    config: SharedRfConfig,
+    config: RfConfig,
+
+    /// Gap threshold: a gap larger than this between consecutive slots is an
+    /// interruption.
     gap_threshold: Duration,
 }
 
-/// Сторона производителя кольцевого буфера.
-///
-/// Обычно принадлежит потоку захвата SDR или задаче предварительной загрузки из
-/// файла.
+/// Producer end of the ring buffer.
+/// Typically owned by the SDR capture thread or file prefetch task.
 pub struct StreamProducer {
     buf: Arc<SharedBuffer>,
 }
 
-/// Сторона потребителя кольцевого буфера.
-///
-/// Реализует [`IqSource`], поэтому может быть подключена к любому этапу
-/// конвейера обработки.
+/// Consumer end of the ring buffer.
+/// Implements [`IqSource`] so it can be dropped into any pipeline stage.
 pub struct StreamConsumer {
     buf: Arc<SharedBuffer>,
     last_read_at: Option<Instant>,
 }
 
-/// Фабрика для создания потокового кольцевого буфера IQ.
-///
-/// [`IqStream`] создаёт пару:
-/// - [`StreamProducer`] — записывает IQ-данные
-/// - [`StreamConsumer`] — читает IQ-данные и реализует [`IqSource`]
-///
-/// Обычно используется как граница между:
-///
-/// ```text
-/// SDR / File reader  →  StreamProducer
-/// DSP pipeline       ←  StreamConsumer
-/// ```
+/// Split an [`IqStream`] into its producer and consumer halves.
 pub struct IqStream;
 
 impl SharedBuffer {
     fn new(
-        config: SharedRfConfig,
+        config: RfConfig,
         capacity: usize,
         slot_size: usize,
         policy: OverflowPolicy,
@@ -323,25 +334,24 @@ impl StreamConsumer {
 }
 
 impl IqStream {
-    /// Создаёт новый потоковый кольцевой буфер IQ.
+    /// Create a new ring buffer and return `(producer, consumer)`.
     ///
-    /// # Возвращает
-    ///
-    /// Кортеж:
-    /// - [`StreamProducer`] — используется источником данных
-    /// - [`StreamConsumer`] — используется DSP-пайплайном
+    /// * `config`    — RF configuration (passed through to emitted
+    ///   [`IqBlock`]s).
+    /// * `capacity`  — number of slots in the ring (must be ≥ 2).
+    /// * `slot_size` — samples per slot.  Choose to match your hardware block
+    ///   size, e.g. `2048` for 1 ms at 2.048 Msps.
+    /// * `policy`    — what to do when the buffer is full.
     #[must_use]
-    pub fn create(
-        config: SharedRfConfig,
+    pub fn new(
+        config: RfConfig,
         capacity: usize,
         slot_size: usize,
         policy: OverflowPolicy,
     ) -> (StreamProducer, StreamConsumer) {
         assert!(capacity >= 2, "capacity must be at least 2");
         assert!(slot_size > 0, "slot_size must be positive");
-
         let buf = Arc::new(SharedBuffer::new(config, capacity, slot_size, policy));
-
         (
             StreamProducer {
                 buf: Arc::clone(&buf),
@@ -356,7 +366,7 @@ impl IqStream {
 
 impl IqSource for StreamConsumer {
     fn config(&self) -> &RfConfig {
-        self.buf.config.as_ref()
+        &self.buf.config
     }
 
     fn name(&self) -> &str {
@@ -399,7 +409,7 @@ impl IqSource for StreamConsumer {
 
         Ok(IqBlock {
             samples,
-            config: Arc::clone(&self.buf.config),
+            config: self.buf.config.clone(),
             start_sample,
         })
     }
@@ -425,7 +435,7 @@ impl IqSource for StreamConsumer {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Тесты
+// Tests
 ////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
@@ -440,7 +450,7 @@ mod tests {
         capacity: usize,
         policy: OverflowPolicy,
     ) -> (StreamProducer, StreamConsumer) {
-        IqStream::create(Arc::new(RfConfig::default()), capacity, SLOT, policy)
+        IqStream::new(RfConfig::default(), capacity, SLOT, policy)
     }
 
     #[test]

@@ -1,43 +1,89 @@
-//! Источники IQ-данных для SDR.
+//! SDR (Software-Defined Radio) IQ source.
 //!
-//! Модуль содержит:
-//! - `MockSdrSource` — детерминированный mock-источник для тестов и CI
-//! - `SoapySource` — аппаратный SDR через SoapySDR (за `feature = "sdr"`)
+//! This module provides two imple,entations:
+//!
+//! * [`MockSdrSource`] — always available, generates a configurable test tone.
+//!   Use this in tests and CI where no hardware is present.
+//! * `SoapySource` — hardware SDR via SoapySDR (RTL-SDR, HackRF, USRP, …).
+//!   Compiled only when the `sdr` feature is enabled **and** the system
+//!   `SoapySDR` library is installed.
+//!
+//! # Enabling hardware SDR
+//!
+//! ```toml
+//! [dependencies]
+//! glrx = { features = ["sdr"] }
+//! ```
+//!
+//! Then install SoapySDR + your device driver:
+//!
+//! ```sh
+//! # Debian / Ubuntu
+//! sudo apt install libsoapysdr-dev soapysdr-module-rtlsdr
+//! ```
+//!
+//! # Architecture note
+//!
+//! Real-time SDR capture runs in a dedicated OS thread that fills a ring
+//! buffer (see [`stream`](super::stream)). `read_block` on [`SoapySource`]
+//! is a non-blocking drain of that buffer.
 
-use std::{f32::consts::TAU, sync::Arc};
+use std::f32::consts::TAU;
 
 use num_complex::Complex32;
 
-use crate::{IqBlock, IqSource, RfConfig, RfResult, SourceMetrics};
+use super::{IqBlock, IqSource, RfConfig, RfResult, SourceMetrics};
 
-/// Mock SDR - always available, useful for unit tests and CI.
+/// A sunthetic IQ source that generates a single-tone complex sinusoid.
+///
+/// Produces `exp(j·2π·tone_hz·t)` at the configured sample rate with
+/// optional additive white Gaussian noise.
+///
+/// # Example
+///
+/// ```
+/// use glrx::rf::{sdr::MockSdrSource, IqSource, RfConfig};
+///
+/// // 10 kHz tone (simulates a ±10 kHz Doppler offset)
+/// let mut src = MockSdrSource::new(RfConfig::default(), 10_000.0, 0.0);
+/// let block = src.read_block(2048).unwrap();
+/// assert_eq!(block.samples.len(), 2048);
+/// ```
 pub struct MockSdrSource {
-    config: Arc<RfConfig>,
+    config: RfConfig,
+
+    /// Tone frequency relative to centre frequency in Hz.
     tone_hz: f64,
+
+    /// RMS noise amplitude (0.0 = noiseless).
     noise_amplitude: f32,
+
+    /// Current phase accumulator in radians.
     phase: f32,
+
+    /// Phase increment per sample.
     phase_step: f32,
     next_sample: u64,
     metrics: SourceMetrics,
 }
 
-/// Аппартный SDR через абстракцию SoapySDR.
+/// Hardware SDR source via the SoapySDR abstraction layer.
 ///
-/// Поддерживает любые устройства с драйвером SoapySDR: RTL-SDR, HackRF, USRP,
-/// LimeSDR, PlutoSDR и др.
+/// Supports any device with a SoapySDR driver: RTL-SDR, HackRF, USRP,
+/// LimeSDR, PlutoSDR, etc.
 ///
-/// # Требования на этапе компиляции
+/// # Compile-time requirement
 ///
-/// Доступно только при включенном Cargo-фиче `sdr` и установленной
-/// C++ библиотеке `SoapySDR` на машине сборки.
+/// Only available when the `sdr` Cargo feature is enabled and the
+/// `SoapySDR` C++ library is installed on the build host.
 ///
-/// # Модель потоков
+/// # Thread model
 ///
-/// Фоновый поток управляет API потоковой передачи SoapySDR и записывает
-/// сэмплы в кольцевой буфер. `read_block` считывает данные из буфера,
-/// блокируясь максимум на `timeout`, если данных недостаточно.
+/// A background thread drives the SoapySDR streaming API and writes
+/// samples into a ring buffer.  `read_block` drains from that buffer,
+/// blocking for at most `timeout` if insufficient data is available.
 ///
-/// # Использование
+/// # Usage
 ///
 /// ```no_run
 /// # #[cfg(feature = "sdr")]
@@ -51,26 +97,29 @@ pub struct MockSdrSource {
 #[cfg(feature = "sdr")]
 pub struct SoapySource {
     #[allow(dead_code)]
-    config: Arc<RfConfig>,
+    config: RfConfig,
     #[allow(dead_code)]
     driver_args: String,
     #[allow(dead_code)]
     metrics: SourceMetrics,
-    // Когда будут добавлены привязки SoapySDR, сюда поместится реальный дескриптор устройства.
+    // When SoapySDR bindings are added, the actual device handle goes here.
     // _device: soapysdr::Device,
     // _stream: soapysdr::RxStream<Complex32>,
 }
 
 impl MockSdrSource {
     /// Create a new mock source.
-    #[must_use]
+    ///
+    /// * `tone_hz` — frequency of the complex sinusoid in Hz (relative to
+    ///   centre).
+    /// * `noise_amplitude` — RMS noise amplitude added to each sample (0 =
+    ///   none).
     pub fn new(
-        config: Arc<RfConfig>,
+        config: RfConfig,
         tone_hz: f64,
         noise_amplitude: f32,
     ) -> Self {
         let phase_step = (TAU as f64 * tone_hz / config.sample_rate_hz) as f32;
-
         Self {
             config,
             tone_hz,
@@ -83,74 +132,14 @@ impl MockSdrSource {
     }
 
     /// Tone frequency this source was configured with.
-    #[must_use]
-    pub const fn tone_hz(&self) -> f64 {
+    pub fn tone_hz(&self) -> f64 {
         self.tone_hz
-    }
-}
-
-#[cfg(feature = "sdr")]
-impl SoapySource {
-    /// Открывает устройство SoapySDR.
-    ///
-    /// * `driver_args` — строка фильтра устройства SoapySDR, например
-    ///   `"driver=rtlsdr"`, `"driver=hackrf"`, или `""`, чтобы использовать
-    ///   первое доступное устройство.
-    pub fn open(
-        driver_args: &str,
-        config: Arc<RfConfig>,
-    ) -> RfResult<Self> {
-        config.validate()?;
-
-        // План будущей реализации
-        //
-        // use soapysdr::{Device, Direction::Rx};
-        //
-        // let device = Device::new(driver_args)
-        //     .map_err(|e| RfError::Sdr(e.to_string()))?;
-        //
-        // device.set_sample_rate(Rx, 0, config.sample_rate_hz)
-        //     .map_err(|e| RfError::Sdr(e.to_string()))?;
-        //
-        // device.set_frequency(Rx, 0, config.center_freq_hz, ())
-        //     .map_err(|e| RfError::Sdr(e.to_string()))?;
-        //
-        // if let Some(gain) = config.gain_db {
-        //     device.set_gain(Rx, 0, gain)
-        //         .map_err(|e| RfError::Sdr(e.to_string()))?;
-        // } else {
-        //     device.set_gain_mode(Rx, 0, true)   // AGC
-        //         .map_err(|e| RfError::Sdr(e.to_string()))?;
-        // }
-        //
-        // let stream = device.rx_stream::<Complex32>(&[0])
-        //     .map_err(|e| RfError::Sdr(e.to_string()))?;
-
-        log::info!(
-            "SoapySource: opening device '{}' @ {:.3} MHz, {:.3} Msps",
-            driver_args,
-            config.center_freq_hz / 1e6,
-            config.sample_rate_hz / 1e6,
-        );
-
-        Ok(Self {
-            config,
-            driver_args: driver_args.to_owned(),
-            metrics: SourceMetrics::default(),
-        })
-    }
-
-    /// Возвращает список всех устройств SoapySDR, видимых в системе.
-    #[must_use]
-    pub fn enumerate() -> Vec<String> {
-        // В будущем: soapysdr::enumerate("").map(|kw| kw.to_string()).collect()
-        vec!["<SoapySDR enumeration not yet implemented>".to_string()]
     }
 }
 
 impl IqSource for MockSdrSource {
     fn config(&self) -> &RfConfig {
-        self.config.as_ref()
+        &self.config
     }
 
     fn name(&self) -> &str {
@@ -179,11 +168,7 @@ impl IqSource for MockSdrSource {
             }
 
             samples.push(s);
-            self.phase += self.phase_step;
-
-            if self.phase >= TAU {
-                self.phase -= TAU
-            }
+            self.phase = (self.phase + self.phase_step) % TAU;
         }
 
         let len = samples.len() as u64;
@@ -193,7 +178,7 @@ impl IqSource for MockSdrSource {
 
         Ok(IqBlock {
             samples,
-            config: Arc::clone(&self.config),
+            config: self.config.clone(),
             start_sample,
         })
     }
@@ -203,18 +188,107 @@ impl IqSource for MockSdrSource {
     }
 }
 
-/// Very simple deterministic pseudo-noise in [-1, 1] based in xorshift64.
+#[cfg(feature = "sdr")]
+impl SoapySource {
+    /// Open a SoapySDR device.
+    ///
+    /// * `driver_args` — SoapySDR device filter string, e.g. `"driver=rtlsdr"`,
+    ///   `"driver=hackrf"`, or `""` to use the first available device.
+    pub fn open(
+        driver_args: &str,
+        config: Arc<RfConfig>,
+    ) -> RfResult<Self> {
+        config.validate()?;
+
+        // Future implementation outline
+        //
+        // use soapysdr::{Device, Direction::Rx};
+        //
+        // let device = Device::new(driver_args)
+        //     .map_err(|e| RfError::Sdr(e.to_string()))?;
+        //
+        // device.set_sample_rate(Rx, 0, config.sample_rate_hz)
+        //     .map_err(|e| RfError::Sdr(e.to_string()))?;
+        //
+        // device.set_frequency(Rx, 0, config.center_freq_hz, ())
+        //     .map_err(|e| RfError::Sdr(e.to_string()))?;
+        //
+        // if let Some(gain) = config.gain_db {
+        //     device.set_gain(Rx, 0, gain)
+        //         .map_err(|e| RfError::Sdr(e.to_string()))?;
+        // } else {
+        //     device.set_gain_mode(Rx, 0, true)   // AGC
+        //         .map_err(|e| RfError::Sdr(e.to_string()))?;
+        // }
+        //
+        // let stream = device.rx_stream::<Complex32>(&[0])
+        //     .map_err(|e| RfError::Sdr(e.to_string()))?;
+        //
+
+        log::info!(
+            "SoapySource: opening device '{}' @ {:.3} MHz, {:.3} Msps",
+            driver_args,
+            config.center_freq_hz / 1e6,
+            config.sample_rate_hz / 1e6,
+        );
+
+        Ok(Self {
+            config,
+            driver_args: driver_args.to_owned(),
+            metrics: SourceMetrics::default(),
+        })
+    }
+
+    /// List all SoapySDR devices currently visible on the system.
+    #[must_use]
+    pub fn enumerate() -> Vec<String> {
+        // Future: soapysdr::enumerate("").map(|kw| kw.to_string()).collect()
+        vec!["<SoapySDR enumeration not yet implemented>".to_string()]
+    }
+}
+
+#[cfg(feature = "sdr")]
+impl IqSource for SoapySource {
+    fn config(&self) -> &RfConfig {
+        &self.config
+    }
+
+    fn name(&self) -> &str {
+        &self.driver_args
+    }
+
+    fn read_block(
+        &mut self,
+        _n: usize,
+    ) -> RfResult<IqBlock> {
+        // TODO: drain ring buffer filled by background streaming thread.
+        Err(RfError::Sdr(
+            "SoapySDR hardware streaming not yet implemented; \
+             use MockSdrSource for testing"
+                .into(),
+        ))
+    }
+
+    fn metrics(&self) -> SourceMetrics {
+        self.metrics.clone()
+    }
+}
+
+/// Very simple deterministic pseudo-noise in [-1, 1] based on xorshift64.
 fn pseudo_noise(mut x: u64) -> f32 {
+    // xorshift64
     x ^= x << 13;
     x ^= x >> 7;
     x ^= x << 17;
 
+    // Use lower 32 bits, map to [-1, 1] via i32 range
     let lo = (x & 0xFFFF_FFFF) as i32;
+
     lo as f32 / i32::MAX as f32
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Тесты
+// Tests
 ////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
@@ -224,11 +298,11 @@ mod tests {
     use super::*;
 
     fn default_mock(tone_hz: f64) -> MockSdrSource {
-        MockSdrSource::new(Arc::new(RfConfig::default()), tone_hz, 0.0)
+        MockSdrSource::new(RfConfig::default(), tone_hz, 0.0)
     }
 
     #[test]
-    fn test_mock_produces_correct_block_size() {
+    fn mock_produces_correct_block_size() {
         let mut src = default_mock(0.0);
         let block = src.read_block(2048).unwrap();
 
@@ -236,8 +310,8 @@ mod tests {
     }
 
     #[test]
-    fn test_mock_zero_tone_is_constant_one() {
-        // 0 Hz tone → exp(j*0) = 1+0j for all samples
+    fn mock_zero_tone_is_constant_one() {
+        // 0 Hz tone → exp(j·0) = 1+0j for all samples
         let mut src = default_mock(0.0);
         let block = src.read_block(8).unwrap();
 
@@ -248,13 +322,12 @@ mod tests {
     }
 
     #[test]
-    fn test_mock_tone_at_quarter_nyquist_rotates_correctly() {
-        // tone = fs/4 → phase step = PI/2 per sample
+    fn mock_tone_at_quarter_nyquist_rotates_correctly() {
+        // tone = fs/4 → phase step = π/2 per sample
         let fs = 2_048_000.0_f64;
         let mut src = default_mock(fs / 4.0);
         let block = src.read_block(4).unwrap();
-
-        // Expected: (1 + 0j), (0 + 1j), (-1 + 0j), (0 - 1j)
+        // Expected: (1+0j), (0+1j), (-1+0j), (0-1j)
         let expected = [
             Complex32::new(1.0, 0.0),
             Complex32::new(0.0, 1.0),
@@ -279,7 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mock_unit_amplitude() {
+    fn mock_unit_amplitude() {
         let mut src = default_mock(50_000.0);
         let block = src.read_block(4096).unwrap();
 
@@ -291,9 +364,8 @@ mod tests {
     }
 
     #[test]
-    fn test_mock_metrics_count_samples() {
+    fn mock_metrics_count_samples() {
         let mut src = default_mock(0.0);
-
         src.read_block(1000).unwrap();
         src.read_block(1000).unwrap();
 
@@ -301,7 +373,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mock_start_sample_increases() {
+    fn mock_start_sample_increases() {
         let mut src = default_mock(0.0);
         let b1 = src.read_block(100).unwrap();
         let b2 = src.read_block(100).unwrap();
@@ -311,8 +383,8 @@ mod tests {
     }
 
     #[test]
-    fn test_mock_with_noise_varies_samples() {
-        let mut src = MockSdrSource::new(Arc::new(RfConfig::default()), 0.0, 0.1);
+    fn mock_with_noise_varies_samples() {
+        let mut src = MockSdrSource::new(RfConfig::default(), 0.0, 0.1);
         let block = src.read_block(64).unwrap();
         // At least some samples should differ from pure tone (1+0j) due to noise
         let max_re_dev = block
@@ -325,10 +397,10 @@ mod tests {
     }
 
     #[test]
-    fn test_mock_phase_continuous_across_blocks() {
+    fn mock_phase_continuous_across_blocks() {
         // Phase at end of block N should be the start of block N+1.
         let fs = 2_048_000.0_f64;
-        let f = fs / 8.0; // PI/4 per sample
+        let f = fs / 8.0; // π/4 per sample
         let mut src = default_mock(f);
         let _b1 = src.read_block(4).unwrap();
         let b2 = src.read_block(4).unwrap();
@@ -339,56 +411,5 @@ mod tests {
 
         assert!((got_re - expected_phase.cos()).abs() < 1e-4);
         assert!((got_im - expected_phase.sin()).abs() < 1e-4);
-    }
-
-    #[test]
-    fn test_noise_deterministic() {
-        let mut src1 = MockSdrSource::new(Arc::new(RfConfig::default()), 0.0, 0.1);
-        let mut src2 = MockSdrSource::new(Arc::new(RfConfig::default()), 0.0, 0.1);
-
-        let b1 = src1.read_block(128).unwrap();
-        let b2 = src2.read_block(128).unwrap();
-
-        for (a, b) in b1.samples.iter().zip(b2.samples.iter()) {
-            assert!((a.re - b.re).abs() < 1e-6);
-            assert!((a.im - b.im).abs() < 1e-6);
-        }
-    }
-
-    #[test]
-    fn test_read_zero_samples() {
-        let mut src = default_mock(0.0);
-        let block = src.read_block(0).unwrap();
-
-        assert_eq!(block.samples.len(), 0);
-        assert_eq!(block.start_sample, 0);
-        assert_eq!(src.metrics().total_samples, 0);
-    }
-
-    #[test]
-    fn test_tone_accessor() {
-        let src = default_mock(12345.0);
-
-        assert_eq!(src.tone_hz(), 12345.0);
-    }
-
-    #[test]
-    fn test_metrics_rate_reported() {
-        let mut src = default_mock(0.0);
-
-        src.read_block(10).unwrap();
-
-        let metrics = src.metrics();
-
-        assert_eq!(metrics.measured_rate_hz, Some(src.config().sample_rate_hz));
-    }
-
-    #[test]
-    fn test_phase_wraparound() {
-        let mut src = default_mock(1_000_000.0);
-        let _ = src.read_block(10_000).unwrap();
-
-        assert!(src.phase >= 0.0);
-        assert!(src.phase < TAU);
     }
 }

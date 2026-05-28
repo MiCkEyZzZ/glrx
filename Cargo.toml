@@ -1,15 +1,21 @@
 [package]
 name = "glrx"
 version = "0.1.0"
-edition = "2021"
 description = "GNSS software-defined receiver"
-license = "MIT"
+documentation = "https://docs.rs/glrx"
+homepage = "https://github.com/MiCkEyZzZ/glrx"
+repository = "https://github.com/MiCkEyZzZ/glrx"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+edition = "2021"
 
 [[bin]]
 name = "glrx"
 path = "src/main.rs"
 
 [features]
+# Default feature set is empty.
+# The crate compiles in no_std environments with no flags enabled.
 default = []
 sdr = []
 
@@ -19,7 +25,6 @@ log = "0.4.29"
 num-complex = "0.4.6"
 parking_lot = "0.12.5"
 rustfft = "6.4.1"
-thiserror = "2.0.18"
 
 [dev-dependencies]
 tempfile = "3.27.0"
