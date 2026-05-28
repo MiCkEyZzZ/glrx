@@ -89,7 +89,7 @@ impl FftEngine {
 
         let mut buf = input.to_vec();
 
-        self.fft_inplace(&mut buf);
+        let _ = self.fft_inplace(&mut buf);
 
         buf
     }
@@ -166,8 +166,8 @@ impl FftEngine {
         let mut sig = signal.to_vec();
         let mut tmpl = template.to_vec();
 
-        self.fft_inplace(&mut sig);
-        self.fft_inplace(&mut tmpl);
+        let _ = self.fft_inplace(&mut sig);
+        let _ = self.fft_inplace(&mut tmpl);
 
         let mut product: Vec<Complex32> = sig
             .iter()
@@ -196,8 +196,8 @@ impl FftEngine {
         let mut sig = signal.to_vec();
         let mut tmpl = template.to_vec();
 
-        self.fft_inplace(&mut sig);
-        self.fft_inplace(&mut tmpl);
+        let _ = self.fft_inplace(&mut sig);
+        let _ = self.fft_inplace(&mut tmpl);
 
         let mut product: Vec<Complex32> = sig
             .iter()
@@ -427,7 +427,7 @@ mod tests {
         let out_alloc = e.fft(&input);
         let mut out_inplace = input.clone();
 
-        e.fft_inplace(&mut out_inplace);
+        let _ = e.fft_inplace(&mut out_inplace);
 
         for (a, b) in out_alloc.iter().zip(out_inplace.iter()) {
             assert!((a.re - b.re).abs() < 1e-4);
