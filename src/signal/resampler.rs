@@ -337,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn decimator_then_interpolator_round_trip_dc() {
+    fn test_decimator_then_interpolator_round_trip_dc() {
         // DC → decimate(2) → interpolate(2) should return ~DC in steady state.
         // Cascaded transient budget:
         //   dec filter (63 taps): 62 input samples → 31 dec output samples in transient

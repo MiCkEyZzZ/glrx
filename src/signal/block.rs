@@ -94,14 +94,14 @@ mod tests {
     }
 
     #[test]
-    fn first_ms_length() {
+    fn test_first_ms_length() {
         let b = block(8192, 2_048_000.0);
 
         assert_eq!(b.first_ms().len(), 2048);
     }
 
     #[test]
-    fn first_ms_short_block() {
+    fn test_first_ms_short_block() {
         let b = block(512, 2_048_000.0);
 
         assert_eq!(b.first_ms().len(), 512);

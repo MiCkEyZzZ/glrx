@@ -342,12 +342,12 @@ mod tests {
     }
 
     #[test]
-    fn sinc_at_zero_is_one() {
+    fn test_sinc_at_zero_is_one() {
         assert!((sinc(0.0) - 1.0).abs() < 1e-12);
     }
 
     #[test]
-    fn sinc_at_nonzero_integers_is_zero() {
+    fn test_sinc_at_nonzero_integers_is_zero() {
         for k in 1..=5 {
             assert!(
                 sinc(k as f64).abs() < 1e-10,
@@ -417,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn low_pass_dc_gain_near_unity() {
+    fn test_low_pass_dc_gain_near_unity() {
         // A well-designed LPF should pass DC with ~0 dB gain
         let mut lpf = FirFilter::low_pass(500_000.0, FS, 63, Window::Hamming);
         // Excite with DC (constant 1+0j) for many samples to flush transients
@@ -431,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn low_pass_attenuates_above_cutoff() {
+    fn test_low_pass_attenuates_above_cutoff() {
         let cutoff = 500_000.0;
         let num_taps = 127;
         let mut lpf = FirFilter::low_pass(cutoff, FS, num_taps, Window::Blackman);
@@ -454,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn num_taps_and_group_delay() {
+    fn test_num_taps_and_group_delay() {
         let f = FirFilter::low_pass(100_000.0, FS, 63, Window::Hamming);
 
         assert_eq!(f.num_taps(), 63);
@@ -462,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_inplace_equals_apply() {
+    fn test_apply_inplace_equals_apply() {
         let input: Vec<Complex32> = (0..64).map(|n| Complex32::new(n as f32, 0.0)).collect();
         let coeffs = vec![1.0_f32 / 3.0; 3];
         let mut f1 = FirFilter::new(coeffs.clone());
@@ -478,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn dc_gain_sum_of_coefficients() {
+    fn test_dc_gain_sum_of_coefficients() {
         let coeffs = vec![0.1_f32, 0.3, 0.2, 0.3, 0.1];
         let f = FirFilter::new(coeffs.clone());
         let expected: f32 = coeffs.iter().sum();
