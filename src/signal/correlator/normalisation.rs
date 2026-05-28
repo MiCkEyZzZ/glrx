@@ -234,7 +234,7 @@ pub fn cn0_estimate_iwbp(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Тесты
+// Tests
 ////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
@@ -255,6 +255,79 @@ mod tests {
     }
 
     #[test]
+    fn test_power_quadrature() {
+        // |1+1j|² = 2
+        let s = vec![Complex32::new(1.0, 1.0); 50];
+
+        assert!((compute_power(&s) - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_power_3_4_is_25() {
+        let s = vec![Complex32::new(3.0, 4.0); 32]; // |s|² = 25
+
+        assert!((compute_power(&s) - 25.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_power_mixed_values() {
+        let s = vec![
+            Complex32::new(1.0, 0.0), // |s|² = 1
+            Complex32::new(0.0, 1.0), // |s|² = 1
+            Complex32::new(1.0, 1.0), // |s|² = 2
+        ];
+
+        // mean = (1+1+2)/3 = 4/3
+        assert!((compute_power(&s) - 4.0 / 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_rms_is_sqrt_of_power() {
+        let s = vec![Complex32::new(3.0, 4.0); 16]; // |s|² = 25, rms = 5
+
+        assert!((compute_rms(&s) - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_rms_unit_signal() {
+        let s = vec![Complex32::new(1.0, 0.0); 64];
+
+        assert!((compute_rms(&s) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_scale_halves_amplitude() {
+        let mut s = vec![Complex32::new(2.0, 4.0); 8];
+
+        scale(&mut s, 0.5);
+
+        for x in &s {
+            assert!((x.re - 1.0).abs() < 1e-6);
+            assert!((x.im - 2.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_scale_zero_factor() {
+        let mut s = vec![Complex32::new(5.0, 3.0); 4];
+
+        scale(&mut s, 0.0);
+
+        for x in &s {
+            assert_eq!(*x, Complex32::new(0.0, 0.0));
+        }
+    }
+
+    #[test]
+    fn test_scale_negative_factor_flips_sign() {
+        let mut s = vec![Complex32::new(1.0, 0.0)];
+
+        scale(&mut s, -1.0);
+
+        assert!((s[0].re + 1.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn test_compute_power_complex_signal() {
         // |1 + 1j|^2 = 2
         let samples = vec![Complex32::new(1.0, 1.0); 50];
@@ -270,6 +343,156 @@ mod tests {
         let rms = compute_rms(&samples);
 
         assert!((rms - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_scale_complex_rotation_90_deg() {
+        let mut s = vec![Complex32::new(1.0, 0.0)];
+
+        // Умножение на j = 90° поворот
+        scale_complex(&mut s, Complex32::new(0.0, 1.0));
+
+        assert!(s[0].re.abs() < 1e-6, "re={}", s[0].re);
+        assert!((s[0].im - 1.0).abs() < 1e-6, "im={}", s[0].im);
+    }
+
+    #[test]
+    fn test_scale_complex_by_one_identity() {
+        let mut s = vec![Complex32::new(3.0, -2.0)];
+
+        scale_complex(&mut s, Complex32::new(1.0, 0.0));
+
+        assert!((s[0].re - 3.0).abs() < 1e-6);
+        assert!((s[0].im + 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_normalize_unit_power_after_call() {
+        let mut s: Vec<Complex32> = (1..=16).map(|n| Complex32::new(n as f32, 0.0)).collect();
+
+        normalize(&mut s);
+
+        assert!((compute_power(&s) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_normalize_already_unit_unchanged() {
+        let mut s = vec![Complex32::new(1.0, 0.0); 64];
+
+        normalize(&mut s);
+
+        assert!((compute_power(&s) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_normalize_preserves_direction() {
+        let original = vec![Complex32::new(3.0, 4.0); 16];
+        let mut s = original.clone();
+
+        normalize(&mut s);
+
+        // Проверяем, что направление (I/Q соотношение) сохранилось
+        let angle_orig = original[0].im.atan2(original[0].re);
+        let angle_norm = s[0].im.atan2(s[0].re);
+
+        assert!((angle_orig - angle_norm).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_normalize_zero_signal_no_panic() {
+        let mut s = vec![Complex32::new(0.0, 0.0); 10];
+        normalize(&mut s); // не должно быть паники
+        assert_eq!(compute_power(&s), 0.0);
+    }
+
+    #[test]
+    fn test_normalize_to_power_target() {
+        let mut s = vec![Complex32::new(3.0, 4.0); 64]; // P = 25
+
+        normalize_to_power(&mut s, 4.0);
+
+        assert!((compute_power(&s) - 4.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_normalize_to_power_high_target() {
+        let mut s = vec![Complex32::new(1.0, 0.0); 32]; // P = 1
+
+        normalize_to_power(&mut s, 100.0);
+
+        assert!((compute_power(&s) - 100.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_cn0_estimate_too_few_samples_returns_zero() {
+        let acc = vec![Complex32::new(10.0, 0.0)];
+
+        assert_eq!(cn0_estimate(&acc, 0.001), 0.0);
+    }
+
+    #[test]
+    fn test_cn0_estimate_empty_returns_zero() {
+        assert_eq!(cn0_estimate(&[], 0.001), 0.0);
+    }
+
+    #[test]
+    fn test_cn0_estimate_strong_signal_above_40dbhz() {
+        // Нешумный сигнал → очень высокий C/N₀
+        let acc: Vec<Complex32> = vec![Complex32::new(1000.0, 0.0); 20];
+        let cn0 = cn0_estimate(&acc, 0.001);
+
+        assert!(cn0 > 40.0, "expected CN0 > 40 dBHz, got {}", cn0);
+    }
+
+    #[test]
+    fn test_cn0_increases_with_snr() {
+        // Более сильный сигнал → выше C/N₀
+        let weak: Vec<Complex32> = (0..20)
+            .map(|i| Complex32::new(1.0 + i as f32 * 0.01, i as f32 * 0.05))
+            .collect();
+        let strong: Vec<Complex32> = weak.iter().map(|s| s * 100.0).collect();
+        let cn0_weak = cn0_estimate(&weak, 0.001);
+        let cn0_strong = cn0_estimate(&strong, 0.001);
+
+        assert!(
+            cn0_strong > cn0_weak,
+            "strong={} weak={}",
+            cn0_strong,
+            cn0_weak
+        );
+    }
+
+    #[test]
+    fn test_cn0_estimate_two_samples_minimum() {
+        let acc = vec![Complex32::new(10.0, 0.0), Complex32::new(10.0, 0.0)];
+        let cn0 = cn0_estimate(&acc, 0.001);
+
+        // С двумя одинаковыми семплами mean_env² = p_coh → denom ≈ 0 → clamped
+        assert!(cn0.is_finite());
+    }
+
+    #[test]
+    fn test_cn0_iwbp_positive_result() {
+        // narrow > wide → положительный C/N₀
+        let cn0 = cn0_estimate_iwbp(100.0, 1.0, 0.001);
+
+        assert!(cn0 > 0.0, "cn0={}", cn0);
+    }
+
+    #[test]
+    fn test_cn0_iwbp_finite_for_equal_powers() {
+        // При равных мощностях числитель = 0 → clamped
+        let cn0 = cn0_estimate_iwbp(10.0, 10.0, 0.001);
+
+        assert!(cn0.is_finite());
+    }
+
+    #[test]
+    fn test_cn0_iwbp_increases_with_snr() {
+        let cn0_low = cn0_estimate_iwbp(10.0, 5.0, 0.001);
+        let cn0_high = cn0_estimate_iwbp(100.0, 5.0, 0.001);
+
+        assert!(cn0_high > cn0_low, "low={} high={}", cn0_low, cn0_high);
     }
 
     #[test]
