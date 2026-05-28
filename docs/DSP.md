@@ -17,8 +17,9 @@
 src/signal/
 ├── correlator/
 │   ├── base.rs             — correlator_epl() — суммирование E/P/L
-│   ├── discriminators.rs   — EplOutput, DLL/PLL дискриминаторы
 │   ├── code_utilities.rs   — shift_code(), make_epl_replicas()
+│   ├── discriminators.rs   — EplOutput, DLL/PLL дискриминаторы
+│   ├── mod.rs
 │   └── normalisation.rs    — power, normalize, cn0_estimate
 ├── block.rs                — SignalBlock (данные после обработки)
 ├── fft.rs                  — FftEngine (FFT/IFFT, кросс-корреляция)
