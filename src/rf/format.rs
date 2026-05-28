@@ -7,21 +7,24 @@ use std::str::FromStr;
 
 use crate::rf::error::{RfError, RfResult};
 
-/// Формат комплексных IQ-отсчётов.
+/// Wire format of the IQ samples in the source (file or SDR).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SampleFormat {
-    /// 8-битные signed IQ-отсчёты: `i8 + i8`.
+    /// Signed 8-bit I/Q pair (2 bytes per complex sample). Used by RTL-SDR in
+    /// raw mode and many GNSS signal recordings.
     I8,
 
-    /// 16-битные signed IQ-отсчёты: `i16 + i16`.
+    /// Signed 16-bit I/Q pair (4 bytes per complex sample). Used by HackRF,
+    /// USRP, and high-dynamic-range recordings.
     I16,
 
-    /// 32-битные floating-point IQ-отсчёты: `f32 + f32`.
+    /// 32-bit float I/Q pair (8 bytes per complex sample).  Used by GNSS-SDR
+    /// `.bin` files and simulation outputs.
     F32,
 }
 
 impl SampleFormat {
-    /// Возвращает размер одного комплексного отсчёта в байтах.
+    /// Number of bytes required to store a single complex sample.
     #[must_use]
     pub const fn bytes_per_complex_sample(self) -> usize {
         match self {
@@ -52,7 +55,7 @@ impl FromStr for SampleFormat {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Тесты
+// Tests
 ////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]

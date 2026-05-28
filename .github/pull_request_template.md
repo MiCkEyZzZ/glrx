@@ -2,7 +2,7 @@
 
 Please include:
 
-- **Scope**: what area of the codebase this touches (e.g. `src`).
+- **Scope**: what area of the codebase this touches (e.g. `glrx`).
 - **Summary**: brief description of the change.
 - **Testing**: how did you verify it works? (unit tests, manual steps).
 - **Checklist**:

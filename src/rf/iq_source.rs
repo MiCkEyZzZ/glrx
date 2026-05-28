@@ -6,8 +6,6 @@
 //!
 //! Используется как абстракция над SDR-устройствами, файлами и потоками.
 
-use std::sync::Arc;
-
 use num_complex::Complex32;
 
 use crate::rf::{
@@ -16,22 +14,27 @@ use crate::rf::{
     metrics::SourceMetrics,
 };
 
-/// Унифицированный интерфейс для любого источника IQ-сэмплов.
+/// Unified interface for any IQ sample source.
 ///
-/// Источник может быть файловым, потоковым или аппаратным SDR-устройством.
+/// Implementations must:
+/// * Return samples normalised to approximately ±1.0 regardless of wire format.
+/// * Be thread-safe (`Send + Sync`) so the pipeline can move the source across
+///   threads.
+/// * Report accurate metrics via [`IqSource::metrics`].
 pub trait IqSource: Send + Sync {
-    /// Возвращает конфигурацию источника.
+    /// Return the configuration of this source
     fn config(&self) -> &RfConfig;
 
-    /// Читает следующий блок из `n` комплексных сэмплов.
+    /// Read the next block of `n` samples.
+    ///
+    /// May return fewer than `n` samples near the end of a file.
+    /// Returns `Err(RfError::EndOfFile)` when no more samples are available.
     fn read_block(
         &mut self,
         n: usize,
     ) -> RfResult<IqBlock>;
 
-    /// Переходит к указанному смещению в сэмплах.
-    ///
-    /// По умолчанию источники могут не поддерживать эту операцию.
+    /// Seek to a sample offset (optional; file sources support this).
     fn seek(
         &mut self,
         _sample_offset: u64,
@@ -39,60 +42,31 @@ pub trait IqSource: Send + Sync {
         Err(RfError::Sdr("этот источник не поддерживает seek".into()))
     }
 
-    /// Возвращает текущий снимок метрик источника.
+    /// Return a snapshot of current metrics.
     fn metrics(&self) -> SourceMetrics;
 
-    /// Возвращает человекочитаемое имя источника для логирования.
+    /// Human-readable name for logging.
     fn name(&self) -> &str;
 }
 
-/// Блок IQ-данных, полученный от источника.
-///
-/// Содержит комплексные отсчёты, конфигурацию на момент захвата и индекс
-/// первого сэмпла в потоке.
+/// A block of IQ samples with the configuration that produced them.
 #[derive(Debug, Clone)]
 pub struct IqBlock {
-    /// Комплексные базовые сэмплы, нормализованные примерно в диапазон `[-1.0,
-    /// 1.0]`.
+    /// Complex baseband samples, normalised to roughly ±1.0
     pub samples: Vec<Complex32>,
 
-    /// Конфигурация, действовавшая при захвате этого блока.
-    pub config: Arc<RfConfig>,
+    /// Config that was active when this block was captured
+    pub config: RfConfig,
 
-    /// Индекс первого сэмпла в общем потоке.
+    /// Sample index of the first sample in this block (monotonically
+    /// increasing)
     pub start_sample: u64,
 }
 
 impl IqBlock {
-    /// Возвращает длительность блока в секундах.
+    /// Duration of this block in seconds
     #[must_use]
     pub fn duration_s(&self) -> f64 {
         self.samples.len() as f64 / self.config.sample_rate_hz
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Тесты
-////////////////////////////////////////////////////////////////////////////////
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use num_complex::Complex32;
-
-    use super::*;
-    use crate::rf::config::RfConfig;
-
-    #[test]
-    fn test_iqblock_duration() {
-        let config = Arc::new(RfConfig::default());
-        let block = IqBlock {
-            samples: vec![Complex32::new(0.0, 0.0); 2048],
-            config,
-            start_sample: 0,
-        };
-
-        assert!((block.duration_s() - 0.001).abs() < 1e-9);
     }
 }

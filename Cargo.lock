@@ -1073,7 +1073,6 @@ dependencies = [
  "parking_lot",
  "rustfft",
  "tempfile",
- "thiserror",
  "tokio-console",
 ]
 

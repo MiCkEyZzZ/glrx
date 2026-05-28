@@ -1,10 +1,33 @@
-//! Источник IQ-данных из бинарного файла.
+//! File-based IQ source.
+//!
+//! Reads raw interleaved I/Q samples from files in three formats:
+//! [`SampleFormat::I8`], [`SampleFormat::I16`], and [`SampleFormat::F32`].
+//!
+//! # File format
+//!
+//! The file is a flat sequence of interleaved `[I, Q, I, Q, ...]` values.
+//! No header is present; format, sample rate, and center frequency must be
+//! supplied via [`RfConfig`].
+//!
+//! # Example
+//!
+//! ```no_run
+//! use glrx::rf::{file::FileSource, IqSource, RfConfig, SampleFormat};
+//!
+//! let config = RfConfig {
+//!     center_freq_hz: 1_575_420_000.0,
+//!     sample_rate_hz: 2_048_000.0,
+//!     format: SampleFormat::I8,
+//!     ..Default::default()
+//! };
+//! let mut src = FileSource::open("gps_l1_2048k.bin", config).unwrap();
+//! let block = src.read_block(2048).unwrap(); // 1 ms of GPS L1 C/A
+//! ```
 
 use std::{
     fs::File,
     io::{BufReader, Seek, SeekFrom},
     path::{Path, PathBuf},
-    sync::Arc,
     time::Instant,
 };
 
@@ -16,22 +39,26 @@ use crate::{
     IqBlock, IqSource, RfConfig, RfError, RfResult, SampleFormat, SourceMetrics,
 };
 
-/// Источник IQ-данных, читаемый из бинарного файла.
+/// IQ source backed by a binary file.
 pub struct FileSource {
     path: PathBuf,
     reader: BufReader<File>,
-    config: Arc<RfConfig>,
+    config: RfConfig,
+    /// Monotonically-increasing sample counter.
     next_samples: u64,
+    /// Whether to loop the file on EOF instead of returning
+    /// [`RfError::EndOfFile`].
     looping: bool,
+    /// Time of the first call to `read_block`, for rate measurement.
     start_time: Option<Instant>,
     metrics: SourceMetrics,
 }
 
 impl FileSource {
-    /// Открыть файл с заданной конфигурацией RF.
+    /// Open a file with the given RF configuration.
     pub fn open<P: AsRef<Path>>(
         path: P,
-        config: Arc<RfConfig>,
+        config: RfConfig,
     ) -> RfResult<Self> {
         config.validate()?;
 
@@ -49,16 +76,16 @@ impl FileSource {
         })
     }
 
-    /// Включить режим зацикливания: при достижении конца файла чтение
-    /// продолжается с начала. Удобно для многократного воспроизведения
-    /// коротких сигналов при разработке алгоритмов.
+    /// Enable looping: when EOF is reached the file is rewound and reading
+    /// continues from the beginning. Useful for repeating short signal captures
+    /// during algorithm development.
     #[must_use]
     pub const fn with_looping(mut self) -> Self {
         self.looping = true;
         self
     }
 
-    /// Общее количество комплексных сэмплов в файле.
+    /// Total number of complex samples in the file.
     pub fn total_samples(&self) -> RfResult<u64> {
         let file = File::open(&self.path)?;
         let bytes = file.metadata()?.len();
@@ -75,12 +102,11 @@ impl FileSource {
         Ok(bytes / bps)
     }
 
-    /// Длительность файла в секундах.
+    /// Duration of the file in seconds.
     pub fn duration_s(&self) -> RfResult<f64> {
         Ok(self.total_samples()? as f64 / self.config.sample_rate_hz)
     }
 
-    /// Внутреннее чтение блока комплексных сэмплов.
     fn read_block_inner(
         &mut self,
         n: usize,
@@ -150,14 +176,12 @@ impl FileSource {
         Ok(samples)
     }
 
-    /// Перемотка файл в начало.
     fn rewind(&mut self) -> RfResult<()> {
         self.reader.seek(SeekFrom::Start(0))?;
 
         Ok(())
     }
 
-    /// Обновление метрики скорости доставки сэмплов.
     fn update_rate_metric(
         &mut self,
         delivered: usize,
@@ -167,7 +191,7 @@ impl FileSource {
         let elapsed = (now - start).as_secs_f64();
 
         if elapsed > 0.5 {
-            // Обновление не чаще чем раз в 0.5 секунды
+            // Update at most every 0.5 s
             let rate = self.metrics.total_samples as f64 / elapsed;
 
             self.metrics.measured_rate_hz = Some(rate);
@@ -203,11 +227,13 @@ impl IqSource for FileSource {
                 Ok(mut chunk) => samples.append(&mut chunk),
                 Err(RfError::EndOfFile) if self.looping && samples.len() < n => {
                     if samples.is_empty() {
+                        // Nothing read at all before EOF — file is truly empty
                         return Err(RfError::EndOfFile);
                     }
 
                     log::debug!("FileSource: EOF mid-block, looping");
                     self.rewind()?;
+                    // continue loop to fill the rest
                 }
                 Err(RfError::EndOfFile) if self.looping => break,
                 Err(RfError::EndOfFile) => {
@@ -215,7 +241,7 @@ impl IqSource for FileSource {
                         return Err(RfError::EndOfFile);
                     }
 
-                    break;
+                    break; // partial block at end of file
                 }
                 Err(e) => return Err(e),
             }
@@ -228,7 +254,7 @@ impl IqSource for FileSource {
 
         Ok(IqBlock {
             samples,
-            config: Arc::clone(&self.config),
+            config: self.config.clone(),
             start_sample,
         })
     }
@@ -251,7 +277,7 @@ impl IqSource for FileSource {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Тесты
+// Tests
 ////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
@@ -264,14 +290,10 @@ mod tests {
 
     fn make_i8_file(pairs: &[(i8, i8)]) -> NamedTempFile {
         let mut f = NamedTempFile::new().unwrap();
-
         for &(i, q) in pairs {
-            f.write_all(&i.to_le_bytes()).unwrap();
-            f.write_all(&q.to_le_bytes()).unwrap();
+            f.write_all(&[i as u8, q as u8]).unwrap();
         }
-
         f.flush().unwrap();
-
         f
     }
 
@@ -281,25 +303,22 @@ mod tests {
             f.write_all(&i.to_le_bytes()).unwrap();
             f.write_all(&q.to_le_bytes()).unwrap();
         }
-
         f.flush().unwrap();
-
         f
     }
 
-    fn default_config(format: SampleFormat) -> Arc<RfConfig> {
-        Arc::new(RfConfig {
+    fn default_config(format: SampleFormat) -> RfConfig {
+        RfConfig {
             format,
             ..RfConfig::default()
-        })
+        }
     }
 
     #[test]
-    fn test_i9_read_correct_values() {
+    fn i8_reads_correct_values() {
         let f = make_i8_file(&[(127, -127), (0, 0), (-64, 64)]);
         let mut src = FileSource::open(f.path(), default_config(SampleFormat::I8)).unwrap();
         let block = src.read_block(3).unwrap();
-
         assert_eq!(block.samples.len(), 3);
         assert!((block.samples[0].re - 1.0).abs() < 0.01);
         assert!((block.samples[0].im + 1.0).abs() < 0.01);
@@ -307,88 +326,78 @@ mod tests {
     }
 
     #[test]
-    fn test_i8_partial_block_at_eof() {
+    fn i8_partial_block_at_eof() {
+        // Write only 2 samples but ask for 10.
         let f = make_i8_file(&[(1, 2), (3, 4)]);
         let mut src = FileSource::open(f.path(), default_config(SampleFormat::I8)).unwrap();
         let block = src.read_block(10).unwrap();
-
         assert_eq!(block.samples.len(), 2);
     }
 
     #[test]
-    fn test_i8_eof_error_on_second_call() {
+    fn i8_eof_error_on_second_call() {
         let f = make_i8_file(&[(1, 2)]);
         let mut src = FileSource::open(f.path(), default_config(SampleFormat::I8)).unwrap();
-
         src.read_block(1).unwrap();
-
         assert!(matches!(src.read_block(1), Err(RfError::EndOfFile)));
     }
 
     #[test]
-    fn test_f32_reads_correct_values() {
+    fn f32_reads_correct_values() {
         let f = make_f32_file(&[(0.5, -0.5), (1.0, 0.0)]);
         let mut src = FileSource::open(f.path(), default_config(SampleFormat::F32)).unwrap();
         let block = src.read_block(2).unwrap();
-
         assert!((block.samples[0].re - 0.5).abs() < 1e-6);
         assert!((block.samples[0].im + 0.5).abs() < 1e-6);
     }
 
     #[test]
-    fn test_seek_reads_from_offset() {
+    fn seek_reads_from_offset() {
         let pairs: Vec<(i8, i8)> = (0i8..8).map(|i| (i, i)).collect();
         let f = make_i8_file(&pairs);
         let mut src = FileSource::open(f.path(), default_config(SampleFormat::I8)).unwrap();
-
+        // Skip first 4 samples and read 1
         src.seek(4).unwrap();
-
         let block = src.read_block(1).unwrap();
-
         assert!((block.samples[0].re - 4.0 / 127.0).abs() < 0.01);
         assert_eq!(block.start_sample, 4);
     }
 
     #[test]
-    fn test_looping_wraps_around() {
+    fn looping_wraps_around() {
         let f = make_i8_file(&[(10, 20), (30, 40)]);
         let mut src = FileSource::open(f.path(), default_config(SampleFormat::I8))
             .unwrap()
             .with_looping();
+        // Read 3 samples: 2 from file + 1 looped
         let block = src.read_block(3).unwrap();
-
         assert_eq!(block.samples.len(), 3);
-
+        // Third sample should equal the first
         let first = norm_i8(10, 20);
-
         assert!((block.samples[2].re - first.re).abs() < 1e-6);
     }
 
     #[test]
-    fn test_total_samples_correct() {
+    fn total_samples_correct() {
         let f = make_i8_file(&[(0, 0); 1024]);
         let src = FileSource::open(f.path(), default_config(SampleFormat::I8)).unwrap();
-
         assert_eq!(src.total_samples().unwrap(), 1024);
     }
 
     #[test]
-    fn test_duration_1ms_at_2048k() {
+    fn duration_1ms_at_2048k() {
         let f = make_i8_file(&[(0, 0); 2048]);
         let src = FileSource::open(f.path(), default_config(SampleFormat::I8)).unwrap();
         let d = src.duration_s().unwrap();
-
         assert!((d - 0.001).abs() < 1e-9);
     }
 
     #[test]
-    fn test_metrics_count_delivered_samples() {
+    fn metrics_count_delivered_samples() {
         let f = make_i8_file(&[(0, 0); 128]);
         let mut src = FileSource::open(f.path(), default_config(SampleFormat::I8)).unwrap();
-
         src.read_block(64).unwrap();
         src.read_block(64).unwrap();
-
         assert_eq!(src.metrics().total_samples, 128);
     }
 
@@ -398,7 +407,6 @@ mod tests {
         let mut src = FileSource::open(f.path(), default_config(SampleFormat::I8)).unwrap();
         let b1 = src.read_block(32).unwrap();
         let b2 = src.read_block(32).unwrap();
-
         assert_eq!(b1.start_sample, 0);
         assert_eq!(b2.start_sample, 32);
     }

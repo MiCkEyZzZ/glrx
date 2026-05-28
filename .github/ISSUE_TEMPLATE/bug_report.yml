@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a bug in the GLRX receiver
+title: "[BUG]"
+labels: [bug]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug in **GLRX**!
+        Please fill out the template below to help us reproduce and fix the issue.
+
+  - type: input
+    id: description
+    attributes:
+      label: What went wrong?
+      description: Describe the bug in detail. Include unexpected behavior, crashes, panics, incorrect DSP output, tracking issues, or wrong GNSS calculations.
+      placeholder: e.g. acquisition fails for valid IQ data, DLL loses lock under stable signal, or position solution diverges unexpectedly
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide the minimal and reproducible steps to trigger the issue.
+      placeholder: |
+        1. Load IQ data or start SDR source
+        2. Run receiver pipeline (acquisition → tracking → navigation)
+        3. Observe incorrect behavior (e.g. no satellite lock, wrong pseudorange, unstable solution)
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Rust version, GLRX version, target platform (no_std if applicable), and feature flags.
+      placeholder: |
+        Ubuntu 22.04
+        Rust stable 1.76
+        GLRX v0.1.0
+        target: x86_64 / ARM / embedded no_std
+        features: sdr / file / simd / etc.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error messages
+      description: Paste relevant logs, panics, debug output, or tracking/acquisition diagnostics.
+      placeholder: e.g. "tracking channel lost lock", "FFT acquisition returned no peaks", "panic at correlator_epl()"
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe what you expected to happen.
+      placeholder: e.g. stable satellite lock, correct acquisition result, or valid position solution within expected error bounds
