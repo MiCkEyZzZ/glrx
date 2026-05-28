@@ -162,6 +162,77 @@ pub fn normalize(samples: &mut [Complex32]) {
     normalize_to_power(samples, 1.0);
 }
 
+/// Оценка C/N₀ методом **moment estimator** (narrow-band power ratio).
+///
+/// Алгоритм:
+///
+/// ```text
+/// P_coh  = mean(|P[k]|²)          — когерентная мощность
+/// P_nc   = mean(|P[k]|)           — некогерентная амплитуда
+/// P_nc²  = P_nc²                  — некогерентная мощность
+///
+/// CN0 = 10·log₁₀( P_coh / (P_nc² − P_coh) / T_coh )  дБ-Гц
+/// ```
+///
+/// # Аргументы
+///
+/// * `prompt_accumulations` — выборка prompt-корреляций за несколько эпох
+///   (типично 20 значений = 20 мс при T_coh = 1 мс)
+/// * `coherent_time_s` — длительность одного интервала интеграции (секунды)
+///
+/// # Возвращает
+///
+/// C/N₀ в **дБ-Гц**. Типичные значения для GPS L1 C/A: 35–50 дБ-Гц.
+///
+/// Возвращает `0.0` если накоплений менее 2.
+pub fn cn0_estimate(
+    prompt_accumulations: &[Complex32],
+    coherent_time_s: f64,
+) -> f32 {
+    if prompt_accumulations.len() < 2 {
+        return 0.0;
+    }
+    let n = prompt_accumulations.len() as f32;
+
+    // Средняя когерентная мощность: mean(|P|²)
+    let p_coh: f32 = prompt_accumulations
+        .iter()
+        .map(|p| p.norm_sqr())
+        .sum::<f32>()
+        / n;
+
+    // Средняя некогерентная амплитуда, возведённая в квадрат: mean(|P|)²
+    let mean_env: f32 = prompt_accumulations.iter().map(|p| p.norm()).sum::<f32>() / n;
+    let p_nc_sq = mean_env * mean_env;
+
+    let denom = (p_nc_sq - p_coh).max(f32::EPSILON);
+    let cn0_linear = p_coh / denom / coherent_time_s as f32;
+
+    10.0 * cn0_linear.max(f32::EPSILON).log10()
+}
+
+/// Оценка C/N₀ методом **NB/WB power ratio** (Baulieu's estimator).
+///
+/// ```text
+/// CN0 = 10·log₁₀((P_nb − P_wb) / P_wb) − 10·log₁₀(T_coh)
+/// ```
+///
+/// * `P_nb` — мощность в узкой полосе (из коррелятора): `|I|² + |Q|²`
+/// * `P_wb` — мощность в широкой полосе (оценка шумового пола)
+///
+/// # Возвращает
+///
+/// C/N₀ в дБ-Гц.
+pub fn cn0_estimate_iwbp(
+    narrow_band_power: f32,
+    wide_band_power: f32,
+    coherent_time_s: f64,
+) -> f32 {
+    let ratio =
+        (narrow_band_power - wide_band_power).max(f32::EPSILON) / wide_band_power.max(f32::EPSILON);
+    10.0 * ratio.log10() - 10.0 * (coherent_time_s as f32).log10()
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Тесты
 ////////////////////////////////////////////////////////////////////////////////

@@ -25,11 +25,9 @@
 pub mod base;
 pub mod code_utilities;
 pub mod discriminators;
-pub mod estimation;
 pub mod normalisation;
 
 pub use base::*;
 pub use code_utilities::*;
 pub use discriminators::*;
-pub use estimation::*;
 pub use normalisation::*;
