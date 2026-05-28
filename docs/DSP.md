@@ -16,16 +16,16 @@
 ```text
 src/signal/
 ├── correlator/
-│   ├── base.rs         — correlator_epl() — суммирование E/P/L
-│   ├── discriminators.rs — EplOutput, DLL/PLL дискриминаторы
-│   ├── code_utilities.rs — shift_code(), make_epl_replicas()
-│   └── normalisation.rs  — power, normalize, cn0_estimate
-├── block.rs            — SignalBlock (данные после обработки)
-├── fft.rs              — FftEngine (FFT/IFFT, кросс-корреляция)
-├── filter.rs           — FIR-фильтр, оконные функции
-├── mixer.rs            — NCO, Mixer (carrier wipe-off)
+│   ├── base.rs             — correlator_epl() — суммирование E/P/L
+│   ├── discriminators.rs   — EplOutput, DLL/PLL дискриминаторы
+│   ├── code_utilities.rs   — shift_code(), make_epl_replicas()
+│   └── normalisation.rs    — power, normalize, cn0_estimate
+├── block.rs                — SignalBlock (данные после обработки)
+├── fft.rs                  — FftEngine (FFT/IFFT, кросс-корреляция)
+├── filter.rs               — FIR-фильтр, оконные функции
+├── mixer.rs                — NCO, Mixer (carrier wipe-off)
 ├── mod.rs
-└── resampler.rs        — Decimator, Interpolator
+└── resampler.rs            — Decimator, Interpolator
 ```
 
 ---
