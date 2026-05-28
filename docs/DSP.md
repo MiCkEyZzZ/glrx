@@ -1,6 +1,6 @@
 # Signal Processing Layer — DSP
 
-Модуль: `src/signal/`
+Module: `src/signal/`
 
 ## Назначение
 
@@ -31,7 +31,7 @@ src/signal/
 
 ---
 
-## Компоненты
+## Components
 
 ### Mixer / NCO (`mixer.rs`)
 
@@ -136,12 +136,12 @@ L += s[n] × code_late[n]
 
 #### `discriminators.rs` — `EplOutput`
 
-| Дискриминатор   | Формула      | Диапазон | Применение    |
-| --------------- | ------------ | -------- | ------------- | ---------- | ------------------- | ------------ | --------------------- | --- | --- | ------- | -------------- |
-| `dll_nelp()`    | `(           | E        | ²−            | L          | ²)/(                | E            | ²+                    | L   | ²)` | [−1,+1] | DLL (основной) |
-| `dll_ele()`     | `            | E        | −             | L          | `                   | зависит от A | DLL (ненормированный) |
-| `pll_atan2()`   | `atan2(Q,I)` | (−π,π]   | PLL (с битом) |
-| `pll_dd_atan()` | `atan(Q/     | I        | )`            | (−π/2,π/2] | PLL BPSK (без бита) |
+| Discriminator | Formula             | Range      | Use case   |
+| ------------- | ------------------- | ---------- | ---------- |
+| dll_nelp      | (E² - L²)/(E² + L²) | [-1,1]     | main DLL   |
+| dll_ele       | E - L               | variable   | simple DLL |
+| pll_atan2     | atan2(Q, I)         | (-π,π]     | robust PLL |
+| pll_dd_atan   | atan(Q/I)           | (-π/2,π/2] | BPSK PLL   |
 
 #### `code_utilities.rs` — `shift_code()`
 
@@ -214,7 +214,7 @@ let cn0 = cn0_estimate(&prompt_history, 0.001); // дБ-Гц
 
 ---
 
-## Производительность (ориентиры)
+## Performance (benchmarks)
 
 Все измерения для блока 2048 сэмплов (1 мс при 2.048 Msps):
 
