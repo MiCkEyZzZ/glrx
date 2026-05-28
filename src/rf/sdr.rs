@@ -196,7 +196,7 @@ impl SoapySource {
     ///   `"driver=hackrf"`, or `""` to use the first available device.
     pub fn open(
         driver_args: &str,
-        config: Arc<RfConfig>,
+        config: RfConfig,
     ) -> RfResult<Self> {
         config.validate()?;
 
@@ -262,6 +262,8 @@ impl IqSource for SoapySource {
         _n: usize,
     ) -> RfResult<IqBlock> {
         // TODO: drain ring buffer filled by background streaming thread.
+
+        use crate::RfError;
         Err(RfError::Sdr(
             "SoapySDR hardware streaming not yet implemented; \
              use MockSdrSource for testing"
