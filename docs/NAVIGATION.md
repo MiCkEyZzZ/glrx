@@ -1,4 +1,4 @@
-# 7. Navigation Layer
+# Navigation Layer
 
 Module:
 
