@@ -6,17 +6,16 @@ Module:
 src/navigation/
 ```
 
-## Название
+## Overview
 
-Navigation-слой декодирует **навигационные сообщения спутников** из
-демодулированного потока битов, поступающего из tracking-слоя. На
-выходе — структурированные данные об орбите и часах спутника,
-необходимые для вычисления псевдодальностей.
+The navigation layer decodes **satellite navigation messages** from the
+demodulated bitstream produced by the tracking layer. The output consists of
+structured satellite orbit and clock data required for pseudorange computation.
 
-## Входные и выходные данные
+## Input and Output Data
 
 ```text
-Tracking (prompt I-компонент, 1 бит / 20 мс)
+Tracking (prompt I-component, 1 bit / 20 ms)
     │
     ▼
 [Navigation Layer]
@@ -30,56 +29,56 @@ Tracking (prompt I-компонент, 1 бит / 20 мс)
 Observables (pseudorange calculator)
 ```
 
-## Структура навигационного сообщения GPS L1 C/A
+## GPS L1 C/A Navigation Message Structure
 
-### Формат кадра
+### Frame Format
 
 ```text
-1 кадр = 5 subframes × 300 бит = 1500 бит = 30 секунд
+1 frame = 5 subframes × 300 bits = 1500 bits = 30 seconds
 
 Subframe 1 (300 бит):
-  ┌─ TLM (30 бит) ─ HOW (30 бит) ─ слова 3-10 (240 бит) ─┐
-  │  преамбула      TOW, subframe ID   clock parameters     │
-  └──────────────────────────────────────────────────────────┘
+  ┌─ TLM (30 bits) ─ HOW (30 bits) ─ words 3-10 (240 bits) ─┐
+  │  preamble      TOW, subframe ID   clock parameters      │
+  └─────────────────────────────────────────────────────────┘
 
-Subframe 2: orbital params (часть 1)
-Subframe 3: orbital params (часть 2)
-Subframe 4: almanac + ионосфера (страницы 1-25, меняются по кругу)
+Subframe 2: orbital params (part 1)
+Subframe 3: orbital params (part 2)
+Subframe 4: almanac + ionosphere (pages 1-25, cyclic)
 Subframe 5: almanac (PRN 1-24)
 ```
 
-### TLM и HOW
+### TLM and HOW
 
-| Поле            | Размер | Описание                                                  |
-| --------------- | ------ | --------------------------------------------------------- |
-| TLM преамбула   | 8 бит  | `0b10001011` = `0x8B` — признак начала subframe           |
-| TLM message     | 14 бит | зарезервировано                                           |
-| HOW TOW         | 17 бит | время начала следующего subframe (в 6-секундных единицах) |
-| HOW subframe ID | 3 бит  | 1–5 — номер текущего subframe                             |
+| Field           | Size    | Description                                     |
+| --------------- | ------- | ----------------------------------------------- |
+| TLM preamble    | 8 bits  | `0b10001011` = `0x8B` — subframe start marker   |
+| TLM message     | 14 bits | reserved                                        |
+| HOW TOW         | 17 bits | start time of next subframe (in 6-second units) |
+| HOW subframe ID | 3 bits  | 1–5 — current subframe number                   |
 
-### Контроль чётности
+### Parity Check
 
-Каждое 30-битное слово содержит 6-битный контроль чётности (Hamming):
+Each 30-bit word contains a 6-bit parity field (Hamming):
 
 ```text
-биты 1-24: данные
-биты 25-30: parity
+bits 1-24: data
+bits 25-30: parity
 ```
 
-Декодирование: проверить каждое из 6 уравнений чётности. При ошибке — ждать
-следующего subframe.
+Decoding: verify each of the 6 parity equations. On failure, wait for the next
+subframe.
 
-## Компоненты
+## Components
 
 ### FrameDecoder (`frame_decoder.rs`)
 
-**Задачи:**
+**Responsibilities:**
 
-1. Детекция преамбулы TLM (`0x8B`)
-2. Проверка parity каждого слова
-3. Извлечение TOW и номера subframe из HOW
-4. Сборка полного subframe (10 × 30 бит)
-5. Диспетчеризация в парсеры Subframe 1/2/3
+1. Detect TLM preamble (`0x8B`)
+2. Verify parity of each word
+3. Extract TOW and subframe ID from HOW
+4. Assemble complete subframe (10 × 30 bits)
+5. Dispatch to Subframe 1/2/3 parsers
 
 ```rust
 pub struct FrameDecoder {
@@ -94,7 +93,7 @@ pub enum DecodeState {
 }
 ```
 
-**Алгоритм детекции преамбулы:**
+**Preamble Detection Algorithm:**
 
 ```text
 for offset in 0..30:
@@ -105,91 +104,91 @@ for offset in 0..30:
 
 ### EphemerisParser (`ephemeris.rs`)
 
-Декодирует Subframe 1, 2, 3 в соответствии с GPS ICD-200.
+Decodes Subframe 1, 2, 3 according to GPS ICD-200.
 
-#### Subframe 1 — параметры часов
+#### Subframe 1 — Clock Parameters
 
-| Параметр      | Биты   | Масштаб   | Описание                   |
-| ------------- | ------ | --------- | -------------------------- |
-| `week_number` | 10 бит | 1         | Номер GPS недели           |
-| `ura_index`   | 4 бит  | —         | User Range Accuracy        |
-| `sv_health`   | 6 бит  | —         | 0 = исправен               |
-| `iodc`        | 10 бит | 1         | Issue of Data Clock        |
-| `toc`         | 16 бит | 2⁴ с      | Время для параметров часов |
-| `af2`         | 8 бит  | 2⁻⁵⁵ с/с² | Квадратичный коэф. часов   |
-| `af1`         | 16 бит | 2⁻⁴³ с/с  | Линейный коэф. часов       |
-| `af0`         | 22 бит | 2⁻³¹ с    | Постоянный коэф. часов     |
+| Parameter     | Bits    | Scale     | Description                 |
+| ------------- | ------- | --------- | --------------------------- |
+| `week_number` | 10 bits | 1         | GPS week number             |
+| `ura_index`   | 4 bits  | —         | User Range Accuracy         |
+| `sv_health`   | 6 bits  | —         | 0 = healthy                 |
+| `iodc`        | 10 bits | 1         | Issue of Data Clock         |
+| `toc`         | 16 bits | 2⁴ s      | Clock reference time        |
+| `af2`         | 8 bits  | 2⁻⁵⁵ s/s² | Quadratic clock coefficient |
+| `af1`         | 16 bits | 2⁻⁴³ s/s  | Linear clock coefficient    |
+| `af0`         | 22 bits | 2⁻³¹ s    | Constant clock coefficient  |
 
-#### Subframe 2 — орбита (часть 1)
+#### Subframe 2 — Orbit (Part 1)
 
-| Параметр  | Биты   | Масштаб    | Описание                   |
-| --------- | ------ | ---------- | -------------------------- |
-| `iode`    | 8 бит  | 1          | Issue of Data Ephemeris    |
-| `crs`     | 16 бит | 2⁻⁵ м      | Поправка синуса радиуса    |
-| `delta_n` | 16 бит | 2⁻⁴³ рад/с | Поправка среднего движения |
-| `m0`      | 32 бит | 2⁻³¹ п рад | Средняя аномалия           |
-| `cuc`     | 16 бит | 2⁻²⁹ рад   | Поправка широты (cos)      |
-| `e`       | 32 бит | 2⁻³³       | Эксцентриситет             |
-| `cus`     | 16 бит | 2⁻²⁹ рад   | Поправка широты (sin)      |
-| `sqrt_a`  | 32 бит | 2⁻¹⁹ м½    | Корень большой полуоси     |
-| `toe`     | 16 бит | 2⁴ с       | Время эфемерид             |
+| Parameter | Bits    | Scale      | Description                    |
+| --------- | ------- | ---------- | ------------------------------ |
+| `iode`    | 8 bits  | 1          | Issue of Data Ephemeris        |
+| `crs`     | 16 bits | 2⁻⁵ m      | Radius sine correction         |
+| `delta_n` | 16 bits | 2⁻⁴³ rad/s | Mean motion correction         |
+| `m0`      | 32 bits | 2⁻³¹ π rad | Mean anomaly                   |
+| `cuc`     | 16 bits | 2⁻²⁹ rad   | Latitude correction (cos)      |
+| `e`       | 32 bits | 2⁻³³       | Eccentricity                   |
+| `cus`     | 16 bits | 2⁻²⁹ rad   | Latitude correction (sin)      |
+| `sqrt_a`  | 32 bits | 2⁻¹⁹ m½    | Square root of semi-major axis |
+| `toe`     | 16 bits | 2⁴ s       | Ephemeris reference time       |
 
-#### Subframe 3 — орбита (часть 2)
+#### Subframe 3 — Orbit (Part 2)
 
-| Параметр    | Биты   | Масштаб    | Описание                  |
-| ----------- | ------ | ---------- | ------------------------- |
-| `cic`       | 16 бит | 2⁻²⁹ рад   | Поправка наклонения (cos) |
-| `omega0`    | 32 бит | 2⁻³¹ п рад | Долгота восходящего узла  |
-| `cis`       | 16 бит | 2⁻²⁹ рад   | Поправка наклонения (sin) |
-| `i0`        | 32 бит | 2⁻³¹ п рад | Наклонение                |
-| `crc`       | 16 бит | 2⁻⁵ м      | Поправка радиуса (cos)    |
-| `omega`     | 32 бит | 2⁻³¹ п рад | Аргумент перигея          |
-| `omega_dot` | 24 бит | 2⁻⁴³ рад/с | Скорость изменения узла   |
-| `idot`      | 14 бит | 2⁻⁴³ рад/с | Скорость изменения i₀     |
+| Parameter   | Bits    | Scale      | Description                  |
+| ----------- | ------- | ---------- | ---------------------------- |
+| `cic`       | 16 bits | 2⁻²⁹ rad   | Inclination correction (cos) |
+| `omega0`    | 32 bits | 2⁻³¹ π rad | Longitude of ascending node  |
+| `cis`       | 16 bits | 2⁻²⁹ rad   | Inclination correction (sin) |
+| `i0`        | 32 bits | 2⁻³¹ π rad | Inclination                  |
+| `crc`       | 16 bits | 2⁻⁵ m      | Radius correction (cos)      |
+| `omega`     | 32 bits | 2⁻³¹ π rad | Argument of perigee          |
+| `omega_dot` | 24 bits | 2⁻⁴³ rad/s | Rate of right ascension      |
+| `idot`      | 14 bits | 2⁻⁴³ rad/s | Inclination rate             |
 
-### Вычисление позиции спутника (ECEF)
+### Satellite Position Computation (ECEF)
 
-По данным эфемерид, для момента времени `t`:
+Using ephemeris data for time `t`:
 
 ```text
-1. Вычислить среднее движение:
-   n₀ = √(μ / a³),   μ = 3.986005×10¹⁴ м³/с²
+1. Compute mean motion:
+   n₀ = √(μ / a³),   μ = 3.986005×10¹⁴ m³/s²
    n  = n₀ + Δn
 
-2. Среднее время от TOE:
-   tk = t − toe  (с учётом переполнения недели)
+2. Time since TOE:
+   tk = t − toe  (with week rollover correction)
 
-3. Средняя аномалия:
+3. Mean anomaly:
    Mk = M₀ + n·tk
 
-4. Эксцентрическая аномалия Ek (итерации Кеплера):
-   Ek = Mk + e·sin(Ek)  (≈5 итераций)
+4. Eccentric anomaly Ek (Kepler iterations):
+   Ek = Mk + e·sin(Ek)  (≈5 iterations)
 
-5. Истинная аномалия:
+5. True anomaly:
    νk = atan2(√(1−e²)·sin(Ek), cos(Ek)−e)
 
-6. Аргумент широты:
+6. Argument of latitude:
    Φk = νk + ω
 
-7. Поправки:
+7. Corrections:
    δuk = cus·sin(2Φk) + cuc·cos(2Φk)
    δrk = crs·sin(2Φk) + crc·cos(2Φk)
    δik = cis·sin(2Φk) + cic·cos(2Φk)
 
-8. Исправленные значения:
+8. Corrected values:
    uk = Φk + δuk
    rk = a·(1 − e·cos(Ek)) + δrk
    ik = i₀ + δik + idot·tk
 
-9. Позиция в плоскости орбиты:
+9. Position in orbital plane:
    xk' = rk·cos(uk)
    yk' = rk·sin(uk)
 
-10. Долгота восходящего узла:
+10. Longitude of ascending node:
     Ωk = Ω₀ + (Ω̇ − Ω̇e)·tk − Ω̇e·toe
-    Ω̇e = 7.2921151467×10⁻⁵ рад/с
+    Ω̇e = 7.2921151467×10⁻⁵ rad/s
 
-11. ECEF координаты:
+11. ECEF coordinates:
     x = xk'·cos(Ωk) − yk'·cos(ik)·sin(Ωk)
     y = xk'·sin(Ωk) + yk'·cos(ik)·cos(Ωk)
     z = yk'·sin(ik)
@@ -197,56 +196,56 @@ for offset in 0..30:
 
 ### Ionospheric Model (`nav_data.rs`)
 
-Модель Клобухара из Subframe 4 (страница 18):
+Klobuchar model from Subframe 4 (page 18):
 
 ```text
-Параметры: α₀ α₁ α₂ α₃ (амплитуда)
-           β₀ β₁ β₂ β₃ (период)
+Parameters: α₀ α₁ α₂ α₃ (amplitude)
+            β₀ β₁ β₂ β₃ (period)
 
-Коррекция (секунды):
+Correction (seconds):
   T_iono = F × (5×10⁻⁹ + A·cos(2π(t−50400)/P))
   F = 1 + 16(0.53−El)³
 
-где El — угол возвышения спутника в полукругах,
-    A = Σαₙ·φₙ  (до нуля, если < 0),
-    P = Σβₙ·φₙ  (не менее 72000 с)
+where El is satellite elevation in semicircles,
+      A = Σαₙ·φₙ  (clamped to zero if negative),
+      P = Σβₙ·φₙ  (minimum 72000 s)
 ```
 
 ### NavData (`nav_data.rs`)
 
-Хранилище текущего состояния навигационных данных:
+Storage for current navigation data state:
 
 ```rust
 pub struct NavData {
-    /// Эфемериды по каждому PRN (1-32 для GPS)
+    /// Ephemerides for each PRN (1-32 for GPS)
     pub ephemeris: HashMap<u8, Ephemeris>,
-    /// Параметры ионосферной модели
+    /// Ionospheric model parameters
     pub iono: Option<IonosphericModel>,
-    /// Альманах (приближённые орбиты всех спутников)
+    /// Almanac (approximate orbits for all satellites)
     pub almanac: HashMap<u8, AlmanacEntry>,
-    /// GPS–UTC поправка (leapseconds)
+    /// GPS–UTC correction (leap seconds)
     pub utc_correction: Option<UtcCorrection>,
 }
 ```
 
-**Валидация эфемерид:**
+**Ephemeris Validation:**
 
-- Проверка `sv_health == 0` (бит здоровья)
-- Проверка `IODE == IODC` (согласованность данных)
-- Проверка возраста данных: `|t − toe| < 2 часа`
+- Check `sv_health == 0` (health flag)
+- Check `IODE == IODC` (data consistency)
+- Check data age: `|t − toe| < 2 hours`
 
-## Поток декодирования (1 эпоха = 20 мс)
+## Decoding Flow (1 epoch = 20 ms)
 
 ```text
-tracking: I_prompt (бит навигационного сообщения)
+tracking: I_prompt (navigation message bit)
     │
-    ▼  знак I → бит (> 0 → 1, < 0 → 0)
+    ▼  I sign → bit (> 0 → 1, < 0 → 0)
 bit_buffer.push(bit)
     │
-    ▼  каждые 30 бит
+    ▼  every 30 bits
 check_parity(word)
     │ OK
-    ▼  каждые 10 слов (300 бит)
+    ▼  every 10 words (300 bits)
 decode_subframe(bits[0..300])
     │
     ├── subframe_id == 1 → parse_clock_params()    → NavData.clock
@@ -255,37 +254,37 @@ decode_subframe(bits[0..300])
     └── subframe_id == 4 → parse_iono_or_almanac() → NavData.iono / .almanac
 ```
 
-**Время до первого fix:**
+**Time to First Fix:**
 
-- Subframe 1–3 декодируются за 18 с (3 × 6 с)
-- Полный набор эфемерид: ~30 с
-- С корректным альманахом warm start: ~6 с
+- Subframes 1–3 decoded in 18 s (3 × 6 s)
+- Full ephemeris set: ~30 s
+- Warm start with valid almanac: ~6 s
 
-## Файловая структура
+## File Structure
 
 ```text
 src/navigation/
-├── mod.rs              — экспорты, NavigationState
-├── frame_decoder.rs    — бит-синхронизация, parity, сборка subframe
-├── ephemeris.rs        — декодирование SF1/SF2/SF3, позиция спутника
+├── mod.rs              — exports, NavigationState
+├── frame_decoder.rs    — bit synchronization, parity, subframe assembly
+├── ephemeris.rs        — SF1/SF2/SF3 decoding, satellite position
 └── nav_data.rs         — NavData, IonosphericModel, Almanac, UtcCorrection
 ```
 
-## Связь с другими модулями
+## Integration with Other Modules
 
-| От кого  | Что получает          | Что отдаёт       | Кому                          |
+| From     | Receives              | Produces         | To                            |
 | -------- | --------------------- | ---------------- | ----------------------------- |
-| Tracking | I_prompt (бит, 20 мс) | —                | —                             |
+| Tracking | I_prompt (bit, 20 ms) | —                | —                             |
 | —        | —                     | Ephemeris        | Observables (pseudorange)     |
 | —        | —                     | IonosphericModel | Observables (iono correction) |
-| —        | —                     | AlmanacEntry     | Acquisition (быстрый поиск)   |
+| —        | —                     | AlmanacEntry     | Acquisition (fast search)     |
 
-## Целевые показатели
+## Target Metrics
 
-| Метрика                     | Цель                              |
-| --------------------------- | --------------------------------- |
-| Bit sync                    | < 40 мс (2 бита)                  |
-| Frame sync (preambule lock) | < 6 с                             |
-| Subframe 1–3 decode         | < 30 с                            |
-| Parity error rate           | < 0.1% при CN0 > 35 дБ-Гц         |
-| Позиция спутника, ошибка    | < 1 м при возрасте эфемерид < 2 ч |
+| Metric                     | Target                         |
+| -------------------------- | ------------------------------ |
+| Bit sync                   | < 40 ms (2 bits)               |
+| Frame sync (preamble lock) | < 6 s                          |
+| Subframe 1–3 decode        | < 30 s                         |
+| Parity error rate          | < 0.1% at CN0 > 35 dB-Hz       |
+| Satellite position error   | < 1 m with ephemeris age < 2 h |
