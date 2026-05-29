@@ -1,5 +1,11 @@
 # Reception Pipeline - GLRX Pipeline
 
+Module:
+
+```text
+src/pipeline/
+```
+
 ## System Overview
 
 GGLRX processes signals through a multi-stage pipeline.
@@ -53,8 +59,6 @@ GGLRX processes signals through a multi-stage pipeline.
 └──────────────┘
 ```
 
----
-
 ## Data at Each Stage
 
 ### IqBlock (RF -> Signal)
@@ -104,8 +108,6 @@ PositionSolution {
 }
 ```
 
----
-
 ## Receiver State Machine
 
 ```text
@@ -123,8 +125,6 @@ NAVIGATING
     ▼ (≥ 4 observables)
 FIXED (position solution available)
 ```
-
----
 
 ## Timing Budget (GPS L1 C/A, 2.048 Msps)
 

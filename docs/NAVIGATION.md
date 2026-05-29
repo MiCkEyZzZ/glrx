@@ -34,7 +34,7 @@ Observables (pseudorange calculator)
 
 ### Формат кадра
 
-```
+```text
 1 кадр = 5 subframes × 300 бит = 1500 бит = 30 секунд
 
 Subframe 1 (300 бит):

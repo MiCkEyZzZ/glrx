@@ -12,8 +12,6 @@ The tracking layer provides continuous synchronization with satellite signals
 after the acquisition stage. Each satellite is processed in an independent tracking
 channel.
 
----
-
 ## Tracking Channel
 
 ```rust
@@ -42,8 +40,6 @@ PLL_LOCK   (phase locked, data readable)
   ▼
 BIT_SYNC   (navigation bits are being decoded)
 ```
-
----
 
 ## Tracking Loops
 
@@ -110,8 +106,6 @@ Carrier NCO correction (frequency only, no phase)
 - After PLL lock, FLL is disabled
 - On lock loss: fallback to FLL (or full reacquisition)
 
----
-
 ## C/N₀ Estimation
 
 ```rust
@@ -129,8 +123,6 @@ if prompt_history.len() >= 20 {
 - `35–40 дБ-Гц` — unstable lock, possible loss
 - `< 35 дБ-Гц` — lock loss, reacquisition required
 
----
-
 ## Multi-Channel
 
 The receiver supports N parallel channels (8/16/32).
@@ -145,8 +137,6 @@ IqBlock (2048 samples, 1 ms)
 ```
 
 Parallel processing via Rayon or tokio::task::spawn_blocking.
-
----
 
 ## Loop Filter Design
 
@@ -163,8 +153,6 @@ y[k] = y[k-1] + (τ_2/τ_1 + T/τ_1) * e[k] - τ_2/τ_1 * e[k-1]
 ```
 
 where `T = 0.001 с` (integration period), `e[k]` is discriminator output.
-
----
 
 ## Planned File Structure
 
