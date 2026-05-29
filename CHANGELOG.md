@@ -61,12 +61,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - `IqSource` trait и `IqBlock` для унифицированного чтения IQ-сэмплов.
 
 - **file**:
-  - `FileSource` для чтения IQ из бинарных файлов (int8, int16, float32) с нормализацией.
+  - `FileSource` Читает raw interleaved I/Q в трёх форматах через `byteorder`
+  - `BufReader` с буфером 1 МБ для минимизации syscall'ов
+  - Looping: EOF → rewind → продолжает заполнять блок (работает даже если `n > file_samples`)
+  - Seek по семплам (не байтам) — вычисляет байтовый offset сам
+  - `total_samples()` и `duration_s()` через метаданные файла
+  - Метрики sample rate через накопленный счётчик
 
 - **sdr**:
-  - `MockSdrSource` для тестов и CI без реального SDR.
-  - Шаблон `SoapySource` для работы с SDR через SoapySDR (подключение RTL-SDR, HackRF,
-    USRP и др.).
+  - `MockSdrSource` — детерминированный комплексный синусоид exp(j·2π·f·t) с
+    псевдошумом, фаза непрерывна между блоками
+  - Шаблон `SoapySource` (за feature flag sdr) — скелет с подробными комментариями
+    где что подключать, enumerate() stub
+
+- **stream**:
+  - SPSC ring buffer на `Mutex<Option<Slot>>` слотах
+  - Три политики переполнения: `DropOldest`, `ErrorOnOverflow`, `BlockProducer`
+  - Детекция gap: если `written_at` двух соседних слотов расходится больше
+    `slot_duration + 5ms` → `interruptions++` + `log::warn`
+  - `StreamConsumer` реализует `IqSource` — прозрачно встраивается в pipeline
+  - Исправлен баг с `wrapping_sub % (capacity+1)` — заменён на явный
+    `AtomicUsize count`
 
 - **config**:
   - `RfConfig` для настройки частоты дискретизации, центральной частоты и усиления.
