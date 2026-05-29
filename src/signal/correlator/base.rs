@@ -29,6 +29,19 @@ use num_complex::Complex32;
 
 use crate::EplOutput;
 
+/// Correlate `signal` with a single code replica.
+///
+/// Returns the coherent sum `Σ signal[n] · code[n]`.
+///
+/// Both slices are truncated to `min(signal.len(), code.len())`.
+#[inline]
+pub fn correlate(
+    signal: &[Complex32],
+    code: &[f32],
+) -> Complex32 {
+    signal.iter().zip(code.iter()).map(|(&s, &c)| s * c).sum()
+}
+
 /// Выполняет EPL-корреляцию за один интервал интеграции.
 ///
 /// # Аргументы
