@@ -20,13 +20,10 @@ glrx
 │   ├── FUNDING.yml
 │   └── pull_request_template.md
 ├── docs
-│   ├── ARCHITECTURE.md
 │   ├── DSP.md
-│   ├── INTEGRATION.md
 │   ├── NAVIGATION.md
 │   ├── PIPELINE.md
 │   ├── PROJECT_STRUCTURE.md
-│   ├── QUICK_START.md
 │   ├── ROADMAP.md
 │   └── TRACKING.md
 ├── examples                       # примеры использования ресивера
