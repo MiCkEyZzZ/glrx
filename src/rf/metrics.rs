@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn test_loss_ratio_zero_total() {
         let m = SourceMetrics::default();
-        assert_eq!(m.loss_ratio(), 0.0);
+        assert!((m.loss_ratio() - 0.0).abs() < 1e-9);
     }
 
     #[test]
@@ -73,7 +73,7 @@ mod tests {
             dropped_samples: 0,
             ..Default::default()
         };
-        assert_eq!(m.loss_ratio(), 0.0);
+        assert!((m.loss_ratio() - 0.0).abs() < 1e-9);
     }
 
     #[test]

@@ -30,7 +30,7 @@ pub struct SignalBlock {
 impl SignalBlock {
     /// Создаёт новый блок.
     #[must_use]
-    pub fn new(
+    pub const fn new(
         samples: Vec<Complex32>,
         sample_rate_hz: f64,
         center_freq_hz: f64,

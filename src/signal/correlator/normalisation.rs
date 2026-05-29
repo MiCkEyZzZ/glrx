@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_compute_power_empty_is_zezo() {
-        assert_eq!(compute_power(&[]), 0.0);
+        assert!((compute_power(&[]) - 0.0).abs() < 1e-9);
     }
 
     #[test]
@@ -402,7 +402,7 @@ mod tests {
     fn test_normalize_zero_signal_no_panic() {
         let mut s = vec![Complex32::new(0.0, 0.0); 10];
         normalize(&mut s); // не должно быть паники
-        assert_eq!(compute_power(&s), 0.0);
+        assert!((compute_power(&s) - 0.0).abs() < 1e-9);
     }
 
     #[test]
@@ -427,12 +427,12 @@ mod tests {
     fn test_cn0_estimate_too_few_samples_returns_zero() {
         let acc = vec![Complex32::new(10.0, 0.0)];
 
-        assert_eq!(cn0_estimate(&acc, 0.001), 0.0);
+        assert!((cn0_estimate(&acc, 0.001) - 0.0).abs() < 1e-9);
     }
 
     #[test]
     fn test_cn0_estimate_empty_returns_zero() {
-        assert_eq!(cn0_estimate(&[], 0.001), 0.0);
+        assert!((cn0_estimate(&[], 0.001) - 0.0).abs() < 1e-9);
     }
 
     #[test]
@@ -441,7 +441,7 @@ mod tests {
         let acc: Vec<Complex32> = vec![Complex32::new(1000.0, 0.0); 20];
         let cn0 = cn0_estimate(&acc, 0.001);
 
-        assert!(cn0 > 40.0, "expected CN0 > 40 dBHz, got {}", cn0);
+        assert!(cn0 > 40.0, "expected CN0 > 40 dBHz, got {cn0}");
     }
 
     #[test]
@@ -454,12 +454,7 @@ mod tests {
         let cn0_weak = cn0_estimate(&weak, 0.001);
         let cn0_strong = cn0_estimate(&strong, 0.001);
 
-        assert!(
-            cn0_strong > cn0_weak,
-            "strong={} weak={}",
-            cn0_strong,
-            cn0_weak
-        );
+        assert!(cn0_strong > cn0_weak, "strong={cn0_strong} weak={cn0_weak}");
     }
 
     #[test]
@@ -476,7 +471,7 @@ mod tests {
         // narrow > wide → положительный C/N₀
         let cn0 = cn0_estimate_iwbp(100.0, 1.0, 0.001);
 
-        assert!(cn0 > 0.0, "cn0={}", cn0);
+        assert!(cn0 > 0.0, "cn0={cn0}");
     }
 
     #[test]
@@ -492,7 +487,7 @@ mod tests {
         let cn0_low = cn0_estimate_iwbp(10.0, 5.0, 0.001);
         let cn0_high = cn0_estimate_iwbp(100.0, 5.0, 0.001);
 
-        assert!(cn0_high > cn0_low, "low={} high={}", cn0_low, cn0_high);
+        assert!(cn0_high > cn0_low, "low={cn0_low} high={cn0_high}");
     }
 
     #[test]
@@ -548,6 +543,6 @@ mod tests {
 
         let p = compute_power(&samples);
 
-        assert_eq!(p, 0.0);
+        assert!((p - 0.0).abs() < 1e-9, "p={p}");
     }
 }

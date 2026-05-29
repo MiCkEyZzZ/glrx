@@ -143,10 +143,10 @@ mod tests {
         let code = vec![1.0_f32, 2.0, 3.0, 4.0];
         let shifted = shift_code(&code, 1.0);
 
-        assert_eq!(shifted[0], 1.0); // clamp: code[0]
-        assert_eq!(shifted[1], 1.0); // code[0]
-        assert_eq!(shifted[2], 2.0); // code[1]
-        assert_eq!(shifted[3], 3.0); // code[2]
+        assert!((shifted[0] - 1.0).abs() < 1e-9); // clamp: code[0]
+        assert!((shifted[1] - 1.0).abs() < 1e-9); // code[0]
+        assert!((shifted[2] - 2.0).abs() < 1e-9); // code[1]
+        assert!((shifted[3] - 3.0).abs() < 1e-9); // code[2]
     }
 
     #[test]
@@ -155,10 +155,10 @@ mod tests {
         let code = vec![1.0_f32, 2.0, 3.0, 4.0];
         let shifted = shift_code(&code, -1.0);
 
-        assert_eq!(shifted[0], 2.0); // code[1]
-        assert_eq!(shifted[1], 3.0); // code[2]
-        assert_eq!(shifted[2], 4.0); // code[3]
-        assert_eq!(shifted[3], 4.0); // clamp: code[3]
+        assert!((shifted[0] - 2.0).abs() < 1e-9); // code[1]
+        assert!((shifted[1] - 3.0).abs() < 1e-9); // code[2]
+        assert!((shifted[2] - 4.0).abs() < 1e-9); // code[3]
+        assert!((shifted[3] - 4.0).abs() < 1e-9); // clamp: code[3]
     }
 
     #[test]
@@ -166,9 +166,9 @@ mod tests {
         let code = vec![10.0_f32, 20.0, 30.0, 40.0, 50.0];
         let shifted = shift_code(&code, 2.0);
 
-        assert_eq!(shifted[2], 10.0);
-        assert_eq!(shifted[3], 20.0);
-        assert_eq!(shifted[4], 30.0);
+        assert!((shifted[2] - 10.0).abs() < 1e-9);
+        assert!((shifted[3] - 20.0).abs() < 1e-9);
+        assert!((shifted[4] - 30.0).abs() < 1e-9);
     }
 
     #[test]
@@ -213,7 +213,7 @@ mod tests {
 
         // Все сэмплы должны быть code[0] = 1.0 (clamp слева)
         for s in &shifted {
-            assert!((s - 1.0).abs() < 1e-6, "s={}", s);
+            assert!((s - 1.0).abs() < 1e-6, "s={s}");
         }
     }
 
@@ -224,7 +224,7 @@ mod tests {
 
         // Все сэмплы должны быть code[2] = 3.0 (clamp справа)
         for s in &shifted {
-            assert!((s - 3.0).abs() < 1e-6, "s={}", s);
+            assert!((s - 3.0).abs() < 1e-6, "s={s}");
         }
     }
 
@@ -243,7 +243,7 @@ mod tests {
 
         for offset in [-10.0, -0.5, 0.0, 0.5, 10.0] {
             let shifted = shift_code(&code, offset);
-            assert_eq!(shifted.len(), code.len(), "offset={}", offset);
+            assert_eq!(shifted.len(), code.len(), "offset={offset}");
         }
     }
 
@@ -259,9 +259,7 @@ mod tests {
 
         assert!(
             prompt_corr > shifted_corr.abs(),
-            "prompt_corr={} shifted_corr={}",
-            prompt_corr,
-            shifted_corr
+            "prompt_corr={prompt_corr} shifted_corr={shifted_corr}"
         );
     }
 
@@ -289,13 +287,13 @@ mod tests {
 
         let (early, prompt, late) = make_epl_replicas(&code, 1.0);
 
-        assert_eq!(prompt[2], 1.0);
+        assert!((prompt[2] - 1.0).abs() < 1e-9);
 
         // Early = advance -> shift left
-        assert_eq!(early[1], 1.0);
+        assert!((early[1] - 1.0).abs() < 1e-9);
 
         // Late = delay -> shift right
-        assert_eq!(late[3], 1.0);
+        assert!((late[3] - 1.0).abs() < 1e-9);
     }
 
     #[test]
@@ -304,8 +302,8 @@ mod tests {
         let (e, p, l) = make_epl_replicas(&prompt, 0.0);
 
         for ((ei, pi), li) in e.iter().zip(p.iter()).zip(l.iter()) {
-            assert_eq!(ei, pi);
-            assert_eq!(pi, li);
+            assert!((ei - pi).abs() < 1e-9);
+            assert!((pi - li).abs() < 1e-9);
         }
     }
 }

@@ -34,7 +34,7 @@ use std::{
 use byteorder::{LittleEndian, ReadBytesExt};
 use num_complex::Complex32;
 
-use crate::{
+use crate::rf::{
     normalise::{norm_f32, norm_i16, norm_i8},
     IqBlock, IqSource, RfConfig, RfError, RfResult, SampleFormat, SourceMetrics,
 };
@@ -92,11 +92,7 @@ impl FileSource {
         let bps = self.config.format.bytes_per_complex_sample() as u64;
 
         if bytes % bps != 0 {
-            log::warn!(
-                "file size {} is not a multiple of {} bytes per sample",
-                bytes,
-                bps,
-            );
+            log::warn!("file size {bytes} is not a multiple of {bps} bytes per sample");
         }
 
         Ok(bytes / bps)
@@ -291,7 +287,8 @@ mod tests {
     fn make_i8_file(pairs: &[(i8, i8)]) -> NamedTempFile {
         let mut f = NamedTempFile::new().unwrap();
         for &(i, q) in pairs {
-            f.write_all(&[i as u8, q as u8]).unwrap();
+            f.write_all(&[i.cast_unsigned(), q.cast_unsigned()])
+                .unwrap();
         }
         f.flush().unwrap();
         f

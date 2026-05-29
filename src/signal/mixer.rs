@@ -326,7 +326,7 @@ mod tests {
             let s = nco.advance();
             let mag = (s.re * s.re + s.im * s.im).sqrt();
 
-            assert!((mag - 1.0).abs() < 1e-4, "sample {}: mag={}", i, mag);
+            assert!((mag - 1.0).abs() < 1e-4, "sample {i}: mag={mag}");
         }
     }
 
@@ -349,7 +349,7 @@ mod tests {
 
         nco.set_frequency(5000.0, FS);
 
-        assert_eq!(nco.phase_rad(), phase_before);
+        assert!((nco.phase_rad() - phase_before).abs() < 1e-9);
     }
 
     #[test]
@@ -372,7 +372,7 @@ mod tests {
     fn test_nco_phase_step_matches_frequency() {
         let freq = 10_000.0;
         let nco = Nco::new(freq, FS);
-        let expected = (TAU as f64 * freq / FS) as f32;
+        let expected = (f64::from(TAU) * freq / FS) as f32;
 
         assert!((nco.phase_step_rad() - expected).abs() < 1e-6);
     }
@@ -474,7 +474,7 @@ mod tests {
 
         for n in 0..128 {
             let s = nco.advance();
-            let phase = (TAU as f64 * freq * n as f64 / FS) as f32;
+            let phase = (f64::from(TAU) * freq * f64::from(n) / FS) as f32;
             let expected = Complex32::new(phase.cos(), phase.sin());
 
             assert!((s.re - expected.re).abs() < 1e-4);
@@ -524,7 +524,9 @@ mod tests {
         let mut mixer = Mixer::new(10_000.0, FS);
 
         let before = mixer.nco.phase_step_rad();
+
         mixer.adjust_frequency(1_000.0);
+
         let after = mixer.nco.phase_step_rad();
 
         assert!(after > before);
@@ -587,8 +589,11 @@ mod tests {
         let mut nco = Nco::new(FS * 2.0, FS); // freq > fs
         for _ in 0..10 {
             let s = nco.advance();
+
             assert!(nco.phase_rad() >= 0.0 && nco.phase_rad() < TAU);
+
             let mag = (s.re * s.re + s.im * s.im).sqrt();
+
             assert!((mag - 1.0).abs() < 1e-5);
         }
     }
@@ -597,6 +602,7 @@ mod tests {
     fn test_nco_zero_samples_generate() {
         let mut nco = Nco::new(1_000.0, FS);
         let v = nco.generate(0);
+
         assert!(v.is_empty());
     }
 
@@ -627,6 +633,7 @@ mod tests {
 
         // Проверяем, что фаза не срывается
         let diff_re = (out1[0].re - out2[0].re).abs();
+
         assert!(diff_re <= 2.0); // условно, проверяем что не NaN
     }
 
@@ -635,7 +642,8 @@ mod tests {
         let mut mixer = Mixer::new(5_000.0, FS);
         mixer.adjust_frequency(10_000.0);
         mixer.reset();
-        assert_eq!(mixer.phase_rad(), 0.0);
+
+        assert!((mixer.phase_rad() - 0.0).abs() < 1e-9);
     }
 
     #[test]
@@ -643,6 +651,7 @@ mod tests {
         let mut mixer = Mixer::new(1_000.0, FS);
         let input: Vec<Complex32> = vec![];
         let out = mixer.mix(&input);
+
         assert!(out.is_empty());
     }
 
@@ -651,6 +660,7 @@ mod tests {
         let input = generate_carrier(10_000.0, FS, 10_000);
         let mut mixer = Mixer::new(-10_000.0, FS);
         let out = mixer.mix(&input);
+
         for s in out.iter().take(10) {
             assert!((s.re - 1.0).abs() < 1e-3);
             assert!(s.im.abs() < 1e-3);
@@ -694,6 +704,7 @@ mod tests {
     fn test_mix_shift_zero_frequency_identity() {
         let input = generate_carrier(3_000.0, FS, 32);
         let out = mix_shift(&input, 0.0, FS);
+
         for (a, b) in input.iter().zip(out.iter()) {
             assert!((a.re - b.re).abs() < 1e-6);
             assert!((a.im - b.im).abs() < 1e-6);
@@ -704,6 +715,7 @@ mod tests {
     fn test_mix_shift_large_block() {
         let input = generate_carrier(1_000.0, FS, 5_000);
         let out = mix_shift(&input, 2_000.0, FS);
+
         assert_eq!(out.len(), input.len());
     }
 
@@ -712,6 +724,7 @@ mod tests {
         let input = generate_carrier(5_000.0, FS, 64);
         let out1 = mix_shift(&input, -5_000.0, FS);
         let out2 = mix_shift(&input, -5_000.0, FS);
+
         // Same input + same phase start → identical output
         for (a, b) in out1.iter().zip(out2.iter()) {
             assert_eq!(a, b);
@@ -722,6 +735,7 @@ mod tests {
     fn test_mix_shift_shifts_tone_to_dc() {
         let tone = generate_carrier(7_000.0, FS, 2048);
         let out = mix_shift(&tone, -7_000.0, FS);
+
         for s in &out {
             assert!((s.re - 1.0).abs() < 1e-3, "re={}", s.re);
         }
@@ -730,7 +744,9 @@ mod tests {
     #[test]
     fn test_generate_carrier_length_and_unit_amplitude() {
         let carrier = generate_carrier(1_575_420_000.0, FS, 2048);
+
         assert_eq!(carrier.len(), 2048);
+
         for s in &carrier {
             let mag = (s.re * s.re + s.im * s.im).sqrt();
             assert!((mag - 1.0).abs() < 1e-4);

@@ -238,14 +238,14 @@ mod tests {
         let out = epl(10.0, 1.0, 0.0, 0.0);
         let d = out.dll_nelp();
 
-        assert!(d >= -1.0 && d <= 1.0, "NELP out of range: {}", d);
+        assert!((1.0..=1.0).contains(&d), "NELP out of range: {d}");
     }
 
     #[test]
     fn test_dll_nelp_zero_signal_no_panic() {
         let out = epl(0.0, 0.0, 0.0, 0.0);
 
-        assert_eq!(out.dll_nelp(), 0.0);
+        assert!((out.dll_nelp() - 0.0).abs() < 1e-9);
     }
 
     #[test]
@@ -306,7 +306,7 @@ mod tests {
             };
             let d = out.pll_atan2();
 
-            assert!(d > -PI - 1e-5 && d <= PI + 1e-5, "atan2={}", d);
+            assert!(d > -PI - 1e-5 && d <= PI + 1e-5, "atan2={d}");
         }
     }
 
@@ -335,8 +335,7 @@ mod tests {
 
             assert!(
                 d > -FRAC_PI_2 - 1e-4 && d <= FRAC_PI_2 + 1e-4,
-                "dd_atan={}",
-                d
+                "dd_atan={d}"
             );
         }
     }

@@ -1,0 +1,3 @@
+//! Acquisition
+
+pub mod correlator;
