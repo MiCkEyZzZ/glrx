@@ -27,14 +27,23 @@ pub trait IqSource: Send + Sync {
 
     /// Read the next block of `n` samples.
     ///
-    /// May return fewer than `n` samples near the end of a file.
-    /// Returns `Err(RfError::EndOfFile)` when no more samples are available.
+    /// May return fewer than `n` samples near the end of a stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RfError::EndOfFile`] when no more samples are available.
+    /// May also return source-specific I/O or decoding errors.
     fn read_block(
         &mut self,
         n: usize,
     ) -> RfResult<IqBlock>;
 
     /// Seek to a sample offset (optional; file sources support this).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RfError::Sdr`] if the source does not support seeking.
+    /// May also return backend-specific I/O errors in implementations.
     fn seek(
         &mut self,
         _sample_offset: u64,

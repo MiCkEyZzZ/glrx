@@ -91,28 +91,30 @@ pub struct Interpolator {
 }
 
 impl Decimator {
-    /// Создаёт дециматор со встроенным FIR-фильтром.
+    /// Creates a decimator with built-in FIR filter.
     ///
-    /// # Аргументы
-    /// - `factor` — коэффициент децимации (>= 2)
+    /// # Arguments
+    /// - `factor` — coefficient of decimation (>= 2)
     ///
-    /// # Паника
-    /// Если `factor < 2`
+    /// # Panics
+    /// Panics if `factor < 2`.
     #[must_use]
     pub fn new(factor: usize) -> Self {
         assert!(factor >= 2, "decimation factor must be >= 2");
 
-        // Normalised cutoff: 0.5/factor (just below the new Nyquist frequency)
-        let cutoff_norm = 0.45 / factor as f64; // slight guard band
+        let cutoff_norm = 0.45 / factor as f64;
         let coeffs = build_lp_coeffs(cutoff_norm, 63);
 
         Self::with_filter(factor, FirFilter::new(coeffs))
     }
 
-    /// Создаёт дециматор с пользовательским FIR-фильтром.
+    /// Creates a decimator with a custom FIR filter.
     ///
-    /// Позволяет использовать собственные характеристики фильтра
-    /// (например, более узкую переходную полосу).
+    /// Allows using custom filter characteristics
+    /// (e.g. more selective transition band).
+    ///
+    /// # Panics
+    /// Panics if `factor < 2`.
     #[must_use]
     pub fn with_filter(
         factor: usize,
@@ -155,16 +157,16 @@ impl Decimator {
 }
 
 impl Interpolator {
-    /// Создаёт интерполятор со встроенным FIR-фильтром.
+    /// Creates an interpolator with built-in FIR filter.
     ///
-    /// # Аргументы
-    /// - `factor` — коэффициент интерполяции (>= 2)
+    /// # Arguments
+    /// - `factor` — interpolation factor (>= 2)
     ///
-    /// # Паника
-    /// Если `factor < 2`
+    /// # Panics
+    /// Panics if `factor < 2`
     #[must_use]
     pub fn new(factor: usize) -> Self {
-        assert!(factor >= 2, "interpolation factor nust be >= 2");
+        assert!(factor >= 2, "interpolation factor must be >= 2");
 
         let cutoff_norm = 0.45 / factor as f64;
 
@@ -177,7 +179,13 @@ impl Interpolator {
         Self::with_filter(factor, FirFilter::new(coeffs))
     }
 
-    /// Создаёт интерполятор с пользовательским FIR-фильтром.
+    /// Creates a decimator with a custom FIR filter.
+    ///
+    /// Allows using custom filter characteristics
+    /// (e.g. more selective transition band).
+    ///
+    /// # Panics
+    /// Panics if `factor < 2`.
     #[must_use]
     pub fn with_filter(
         factor: usize,

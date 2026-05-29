@@ -176,7 +176,8 @@ impl FirFilter {
     }
 
     /// Group delay in samples: `(num_taps - 1) / 2` for a symetric filter.
-    pub fn group_delay_samples(&self) -> usize {
+    #[must_use]
+    pub const fn group_delay_samples(&self) -> usize {
         (self.coeffs.len() - 1) / 2
     }
 
@@ -231,7 +232,7 @@ impl FirFilter {
     /// нуля.
     pub fn reset(&mut self) {
         for s in self.state.iter_mut() {
-            *s = Complex32::default()
+            *s = Complex32::default();
         }
     }
 
@@ -242,6 +243,7 @@ impl FirFilter {
     }
 
     /// DC gain of the filter (sum of coefficients).
+    #[must_use]
     pub fn dc_gain(&self) -> f32 {
         self.coeffs.iter().sum()
     }

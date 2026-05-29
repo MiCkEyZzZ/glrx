@@ -98,6 +98,7 @@ pub fn shift_code(
 /// # Возвращает
 ///
 /// `(early, prompt_clone, late)` - три вектора кода
+#[must_use]
 pub fn make_epl_replicas(
     prompt: &[f32],
     half_chip_samples: f64,
