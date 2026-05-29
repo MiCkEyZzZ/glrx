@@ -308,7 +308,10 @@ mod tests {
     #[test]
     fn test_rectangular_window_is_all_ones() {
         for n in 0..32 {
-            assert_eq!(Window::Rectangular.value(n, 32), 1.0);
+            assert!(
+                (Window::Rectangular.value(n, 32) - 1.0).abs() < 1e-9,
+                "n={n}"
+            );
         }
     }
 
@@ -320,7 +323,7 @@ mod tests {
             let w1 = Window::Hamming.value(n, len);
             let w2 = Window::Hamming.value(len - 1 - n, len);
 
-            assert!((w1 - w2).abs() < 1e-10, "n={}: {} vs {}", n, w1, w2);
+            assert!((w1 - w2).abs() < 1e-10, "n={n}: {w1} vs {w2}");
         }
     }
 
@@ -338,7 +341,7 @@ mod tests {
         let len = 65;
         let center = Window::Blackman.value(len / 2, len);
 
-        assert!((center - 1.0).abs() < 1e-9, "center={}", center);
+        assert!((center - 1.0).abs() < 1e-9, "center={center}");
     }
 
     #[test]
@@ -350,10 +353,10 @@ mod tests {
     fn test_sinc_at_nonzero_integers_is_zero() {
         for k in 1..=5 {
             assert!(
-                sinc(k as f64).abs() < 1e-10,
+                sinc(f64::from(k)).abs() < 1e-10,
                 "sinc({})={}",
                 k,
-                sinc(k as f64)
+                sinc(f64::from(k))
             );
         }
     }
@@ -395,7 +398,7 @@ mod tests {
         let one_block = f1.apply(&full_input);
         let part1 = f2.apply(&full_input[..4]);
         let part2 = f2.apply(&full_input[4..]);
-        let two_block: Vec<_> = part1.iter().chain(part2.iter()).cloned().collect();
+        let two_block: Vec<_> = part1.iter().chain(part2.iter()).copied().collect();
 
         for (a, b) in one_block.iter().zip(two_block.iter()) {
             assert!((a.re - b.re).abs() < 1e-6, "a={} b={}", a.re, b.re);
@@ -450,7 +453,7 @@ mod tests {
         let skip = num_taps - 1;
         let max_amp: f32 = out[skip..].iter().map(|s| s.norm()).fold(0.0_f32, f32::max);
 
-        assert!(max_amp < 0.1, "stopband amplitude={}", max_amp);
+        assert!(max_amp < 0.1, "stopband amplitude={max_amp}");
     }
 
     #[test]

@@ -13,7 +13,7 @@ pub(crate) fn norm_i8(
 ) -> Complex32 {
     const SCALE: f32 = 1.0 / 127.0;
 
-    Complex32::new(i as f32 * SCALE, q as f32 * SCALE)
+    Complex32::new(f32::from(i) * SCALE, f32::from(q) * SCALE)
 }
 
 /// Нормализует пару I16 сэмплов в Complex32 в диапазоне [-1.0, 1.0].
@@ -23,7 +23,7 @@ pub(crate) fn norm_i16(
     q: i16,
 ) -> Complex32 {
     const SCALE: f32 = 1.0 / 32767.0;
-    Complex32::new(i as f32 * SCALE, q as f32 * SCALE)
+    Complex32::new(f32::from(i) * SCALE, f32::from(q) * SCALE)
 }
 
 /// F32 пара: передаётся без изменений.

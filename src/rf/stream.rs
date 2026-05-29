@@ -42,7 +42,7 @@ use std::{
 use num_complex::Complex32;
 use parking_lot::Mutex;
 
-use crate::{IqBlock, IqSource, RfConfig, RfError, RfResult, SourceMetrics};
+use crate::rf::{IqBlock, IqSource, RfConfig, RfError, RfResult, SourceMetrics};
 
 /// What to do when the ring buffer is full and a producer tries to write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -320,9 +320,7 @@ impl StreamConsumer {
             if actual > expected + self.buf.gap_threshold {
                 self.buf.interruptions.fetch_add(1, Ordering::Relaxed);
                 log::warn!(
-                    "IqStream: stream gap detected (expected {:?}, actual {:?})",
-                    expected,
-                    actual
+                    "IqStream: stream gap detected (expected {expected:?}, actual {actual:?})"
                 );
             }
         }
@@ -369,7 +367,7 @@ impl IqSource for StreamConsumer {
         &self.buf.config
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "iq_stream"
     }
 
@@ -479,7 +477,7 @@ mod tests {
         for i in 0..3u64 {
             let block = c.read_block(SLOT).unwrap();
 
-            assert_eq!(block.samples[0].re, i as f32);
+            assert!((block.samples[0].re - i as f32).abs() < 1e-9);
             assert_eq!(block.start_sample, i * SLOT as u64);
         }
     }

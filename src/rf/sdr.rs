@@ -4,7 +4,7 @@
 //!
 //! * [`MockSdrSource`] — always available, generates a configurable test tone.
 //!   Use this in tests and CI where no hardware is present.
-//! * `SoapySource` — hardware SDR via SoapySDR (RTL-SDR, HackRF, USRP, …).
+//! * `SoapySource` — hardware SDR via `SoapySDR` (RTL-SDR, `HackRF`, USRP, …).
 //!   Compiled only when the `sdr` feature is enabled **and** the system
 //!   `SoapySDR` library is installed.
 //!
@@ -15,7 +15,7 @@
 //! glrx = { features = ["sdr"] }
 //! ```
 //!
-//! Then install SoapySDR + your device driver:
+//! Then install `SoapySDR` + your device driver:
 //!
 //! ```sh
 //! # Debian / Ubuntu
@@ -67,10 +67,10 @@ pub struct MockSdrSource {
     metrics: SourceMetrics,
 }
 
-/// Hardware SDR source via the SoapySDR abstraction layer.
+/// Hardware SDR source via the `SoapySDR` abstraction layer.
 ///
-/// Supports any device with a SoapySDR driver: RTL-SDR, HackRF, USRP,
-/// LimeSDR, PlutoSDR, etc.
+/// Supports any device with a `SoapySDR` driver: RTL-SDR, `HackRF`, USRP,
+/// `LimeSDR`, `PlutoSDR`, etc.
 ///
 /// # Compile-time requirement
 ///
@@ -79,7 +79,7 @@ pub struct MockSdrSource {
 ///
 /// # Thread model
 ///
-/// A background thread drives the SoapySDR streaming API and writes
+/// A background thread drives the `SoapySDR` streaming API and writes
 /// samples into a ring buffer.  `read_block` drains from that buffer,
 /// blocking for at most `timeout` if insufficient data is available.
 ///
@@ -114,12 +114,13 @@ impl MockSdrSource {
     ///   centre).
     /// * `noise_amplitude` — RMS noise amplitude added to each sample (0 =
     ///   none).
+    #[must_use]
     pub fn new(
         config: RfConfig,
         tone_hz: f64,
         noise_amplitude: f32,
     ) -> Self {
-        let phase_step = (TAU as f64 * tone_hz / config.sample_rate_hz) as f32;
+        let phase_step = (f64::from(TAU) * tone_hz / config.sample_rate_hz) as f32;
         Self {
             config,
             tone_hz,
@@ -132,7 +133,8 @@ impl MockSdrSource {
     }
 
     /// Tone frequency this source was configured with.
-    pub fn tone_hz(&self) -> f64 {
+    #[must_use]
+    pub const fn tone_hz(&self) -> f64 {
         self.tone_hz
     }
 }
@@ -142,7 +144,7 @@ impl IqSource for MockSdrSource {
         &self.config
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "mock_sdr"
     }
 
@@ -190,9 +192,9 @@ impl IqSource for MockSdrSource {
 
 #[cfg(feature = "sdr")]
 impl SoapySource {
-    /// Open a SoapySDR device.
+    /// Open a `SoapySDR` device.
     ///
-    /// * `driver_args` — SoapySDR device filter string, e.g. `"driver=rtlsdr"`,
+    /// * `driver_args` — `SoapySDR` device filter string, e.g. `"driver=rtlsdr"`,
     ///   `"driver=hackrf"`, or `""` to use the first available device.
     pub fn open(
         driver_args: &str,
@@ -239,7 +241,7 @@ impl SoapySource {
         })
     }
 
-    /// List all SoapySDR devices currently visible on the system.
+    /// List all `SoapySDR` devices currently visible on the system.
     #[must_use]
     pub fn enumerate() -> Vec<String> {
         // Future: soapysdr::enumerate("").map(|kw| kw.to_string()).collect()
@@ -263,7 +265,8 @@ impl IqSource for SoapySource {
     ) -> RfResult<IqBlock> {
         // TODO: drain ring buffer filled by background streaming thread.
 
-        use crate::RfError;
+        use crate::rf::RfError;
+
         Err(RfError::Sdr(
             "SoapySDR hardware streaming not yet implemented; \
              use MockSdrSource for testing"
@@ -361,7 +364,7 @@ mod tests {
         for s in &block.samples {
             let mag = (s.re * s.re + s.im * s.im).sqrt();
 
-            assert!((mag - 1.0).abs() < 1e-4, "magnitude={}", mag);
+            assert!((mag - 1.0).abs() < 1e-4, "magnitude={mag}");
         }
     }
 

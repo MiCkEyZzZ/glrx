@@ -27,13 +27,14 @@
 
 use num_complex::Complex32;
 
-use crate::EplOutput;
+use crate::signal::correlator::discriminators::EplOutput;
 
 /// Correlate `signal` with a single code replica.
 ///
 /// Returns the coherent sum `Σ signal[n] · code[n]`.
 ///
 /// Both slices are truncated to `min(signal.len(), code.len())`.
+#[must_use]
 #[inline]
 pub fn correlate(
     signal: &[Complex32],

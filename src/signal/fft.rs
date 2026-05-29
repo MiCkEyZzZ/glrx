@@ -269,7 +269,7 @@ mod tests {
         assert_eq!(peal_bin, 0);
 
         for (k, &p) in spectrum.iter().enumerate().skip(1) {
-            assert!(p < 1e-6, "bin {} power={}", k, p);
+            assert!(p < 1e-6, "bin {k} power={p}");
         }
     }
 
@@ -289,7 +289,7 @@ mod tests {
 
         let peak = engine.peak_bin(&signal);
 
-        assert_eq!(peak, 10, "expected peak at bin 10, got {}", peak);
+        assert_eq!(peak, 10, "expected peak at bin 10, got {peak}");
     }
 
     #[test]
@@ -328,7 +328,7 @@ mod tests {
             .map(|(i, _)| i)
             .unwrap();
 
-        assert_eq!(peak_idx, 0, "expected peak at lag=0, got {}", peak_idx);
+        assert_eq!(peak_idx, 0, "expected peak at lag=0, got {peak_idx}");
     }
 
     #[test]
@@ -366,7 +366,7 @@ mod tests {
     fn test_bin_freq_dc_is_zero() {
         let e = FftEngine::new(1024);
 
-        assert_eq!(e.bin_to_freq(0, FS), 0.0);
+        assert!((e.bin_to_freq(0, FS) - 0.0).abs() < 1e-9, "n={}", 1024);
     }
 
     #[test]
@@ -390,12 +390,10 @@ mod tests {
     #[test]
     fn test_fftshift_moves_dc_to_centre() {
         let n = 8;
-        let input: Vec<Complex32> = (0..n as i32)
-            .map(|k| Complex32::new(k as f32, 0.0))
-            .collect();
+        let input: Vec<Complex32> = (0..n).map(|k| Complex32::new(k as f32, 0.0)).collect();
         let shifted = FftEngine::fftshift(&input);
 
-        assert_eq!(shifted[n / 2].re, 0.0);
+        assert!((shifted[n / 2].re - 0.0).abs() < 1e-9, "n={n}");
     }
 
     #[test]
@@ -427,7 +425,7 @@ mod tests {
         let out_alloc = e.fft(&input);
         let mut out_inplace = input.clone();
 
-        let _ = e.fft_inplace(&mut out_inplace);
+        let () = e.fft_inplace(&mut out_inplace);
 
         for (a, b) in out_alloc.iter().zip(out_inplace.iter()) {
             assert!((a.re - b.re).abs() < 1e-4);

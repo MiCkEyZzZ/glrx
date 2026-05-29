@@ -122,7 +122,7 @@ mod tests {
     fn test_bandwidth_and_period() {
         let cfg = RfConfig::default();
 
-        assert_eq!(cfg.bandwidth_hz(), 1_024_000.0);
+        assert!((cfg.bandwidth_hz() - 1_024_000.0).abs() < 1e-9);
         assert!((cfg.sample_period_s() - 1.0 / 2_048_000.0).abs() < 1e-12);
     }
 }

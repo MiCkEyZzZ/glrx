@@ -40,7 +40,7 @@
 
 use num_complex::Complex32;
 
-use crate::{FirFilter, Window};
+use crate::signal::filter::{FirFilter, Window};
 
 /// Дециматор (понижение частоты дискретизации).
 ///
@@ -98,6 +98,7 @@ impl Decimator {
     ///
     /// # Паника
     /// Если `factor < 2`
+    #[must_use]
     pub fn new(factor: usize) -> Self {
         assert!(factor >= 2, "decimation factor must be >= 2");
 
@@ -112,6 +113,7 @@ impl Decimator {
     ///
     /// Позволяет использовать собственные характеристики фильтра
     /// (например, более узкую переходную полосу).
+    #[must_use]
     pub fn with_filter(
         factor: usize,
         filter: FirFilter,
@@ -122,11 +124,13 @@ impl Decimator {
     }
 
     /// Возвращает коэффициент децимации.
-    pub fn factor(&self) -> usize {
+    #[must_use]
+    pub const fn factor(&self) -> usize {
         self.factor
     }
 
     /// Вычисляет выходную частоту дискретизации.
+    #[must_use]
     pub fn output_rate(
         &self,
         input_rate_hz: f64,
@@ -158,6 +162,7 @@ impl Interpolator {
     ///
     /// # Паника
     /// Если `factor < 2`
+    #[must_use]
     pub fn new(factor: usize) -> Self {
         assert!(factor >= 2, "interpolation factor nust be >= 2");
 
@@ -173,6 +178,7 @@ impl Interpolator {
     }
 
     /// Создаёт интерполятор с пользовательским FIR-фильтром.
+    #[must_use]
     pub fn with_filter(
         factor: usize,
         filter: FirFilter,
@@ -183,11 +189,13 @@ impl Interpolator {
     }
 
     /// Возвращает коэффициент интерполяции.
-    pub fn factor(&self) -> usize {
+    #[must_use]
+    pub const fn factor(&self) -> usize {
         self.factor
     }
 
     /// Вычисляет выходную частоту дискретизации.
+    #[must_use]
     pub fn output_rate(
         &self,
         input_rate_hz: f64,
@@ -233,6 +241,8 @@ fn build_lp_coeffs(
 
 #[cfg(test)]
 mod tests {
+    use core::f64;
+
     use super::*;
 
     #[test]
@@ -274,7 +284,7 @@ mod tests {
         let f_alias = 700_000.0_f64; // > fs / (2 * factor), must be filtered
         let tone: Vec<Complex32> = (0..n)
             .map(|i| {
-                let t = i as f64 / fs;
+                let t = f64::from(i) / fs;
                 Complex32::new((2.0 * std::f64::consts::PI * f_alias * t).cos() as f32, 0.0)
             })
             .collect();
@@ -295,7 +305,7 @@ mod tests {
         let full = d1.decimate(&input);
         let p1 = d2.decimate(&input[..128]);
         let p2 = d2.decimate(&input[128..]);
-        let split: Vec<_> = p1.iter().chain(p2.iter()).cloned().collect();
+        let split: Vec<_> = p1.iter().chain(p2.iter()).copied().collect();
 
         for (a, b) in full.iter().zip(split.iter()) {
             assert!((a.re - b.re).abs() < 1e-5, "a={} b={}", a.re, b.re);
@@ -306,21 +316,24 @@ mod tests {
     fn test_decimator_output_rate() {
         let d = Decimator::new(4);
 
-        assert_eq!(d.output_rate(2_048_000.0), 512_000.0);
+        assert!((d.output_rate(2_048_000.0) - 512_000.0).abs() < 1e-9);
     }
 
     #[test]
-    pub fn test_interpolator_output_length() {
-        let d = Decimator::new(4);
+    fn test_interpolator_output_length() {
+        let mut i = Interpolator::new(4);
 
-        assert_eq!(d.output_rate(2_048_000.0), 512_000.0);
+        let input = vec![Complex32::default(); 128];
+        let out = i.interpolate(&input);
+
+        assert_eq!(out.len(), 512);
     }
 
     #[test]
     fn test_interpolator_output_rate() {
         let i = Interpolator::new(4);
 
-        assert_eq!(i.output_rate(512_000.0), 2_048_000.0);
+        assert!((i.output_rate(512_000.0) - 2_048_000.0).abs() < 1e-9);
     }
 
     #[test]
