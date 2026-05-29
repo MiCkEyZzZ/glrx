@@ -1,6 +1,10 @@
 # Signal Processing Layer — DSP
 
-Module: `src/signal/`
+Module:
+
+```text
+src/signal/
+```
 
 ## Назначение
 
@@ -9,11 +13,9 @@ Module: `src/signal/`
 или системы (GPS/GLONASS/BeiDou) — они работают с `Complex32` и не знают ничего
 о навигационных данных.
 
----
-
 ## Module Structure
 
-````text
+```text
 src/signal/
 ├── correlator/
 │   ├── base.rs             # correlator_epl() — E/P/L accumulation
@@ -27,8 +29,7 @@ src/signal/
 ├── mixer.rs               # NCO, Mixer (carrier wipe-off)
 ├── mod.rs
 └── resampler.rs           # Decimator, Interpolator
-
----
+```
 
 ## Components
 
@@ -39,7 +40,7 @@ NCO (Numerically Controlled Oscillator) генерирует комплексн�
 
 ```text
 входной IQ → Mixer (×exp(−j·2π·f_carrier·t)) → baseband IQ
-````
+```
 
 **Ключевые свойства:**
 
@@ -54,8 +55,6 @@ NCO (Numerically Controlled Oscillator) генерирует комплексн�
 | Downconversion (IF) | −IF_freq             |
 | Carrier wipe-off    | −(carrier + doppler) |
 | Test tone           | arbitrary frequency  |
-
----
 
 ### FIR Filter (`filter.rs`)
 
@@ -79,8 +78,6 @@ h[n] = 2·fc · sinc(2·fc·(n − M/2)) · w[n]
 **Состояние фильтра сохраняется между блоками** — можно вызывать `apply()`
 последовательно для потока данных.
 
----
-
 ### Resampler (`resampler.rs`)
 
 Децимация и интерполяция с автоматическим антиалиасинговым LPF (63 taps, Hamming,
@@ -93,8 +90,6 @@ Interpolation:  zero-stuffing → LPF (×factor gain)
 
 **Важно:** фильтр в `Decimator`/`Interpolator` сохраняет состояние — непрерывная
 потоковая обработка корректна.
-
----
 
 ### FFT Engine (`fft.rs`)
 
@@ -118,8 +113,6 @@ Interpolation:  zero-stuffing → LPF (×factor gain)
   cross_correlate_power(iq_block, prn_code_fft)
   найти пик → code_phase + doppler
 ```
-
----
 
 ### Correlator (`correlator/`)
 
@@ -168,8 +161,6 @@ offset = 0 → без изменений (Prompt-реплика)
 | `cn0_estimate()`       | C/N₀ via moment estimator (dB-Hz)                |
 | `cn0_estimate_iwbp()`  | C/N₀ via narrowband/wideband power ratio (dB-Hz) |
 
----
-
 ### SignalBlock (`block.rs`)
 
 A data block **after signal processing** (downconversion + filtering), passed
@@ -184,8 +175,6 @@ SignalBlock {
     applied_doppler_hz: f64,   // Doppler shift applied during mixing
 }
 ```
-
----
 
 ## Типичный порядок вызовов (1 мс GPS epoch)
 
@@ -210,8 +199,6 @@ let pll_err = epl.pll_dd_atan(); // → PLL loop filter → carrier NCO
 prompt_history.push(epl.prompt);
 let cn0 = cn0_estimate(&prompt_history, 0.001); // дБ-Гц
 ```
-
----
 
 ## Performance (benchmarks)
 
