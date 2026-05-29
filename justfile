@@ -126,6 +126,9 @@ test-release:
 test-doc:
     cargo test --doc --workspace
 
+next:
+    cargo nextest run --workspace
+
 # =============================================================================
 # Benchmarks & Validation
 # =============================================================================
