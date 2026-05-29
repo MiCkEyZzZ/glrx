@@ -1,0 +1,94 @@
+title: "Feature request"
+labels: ["feature-request"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to propose a feature for **GLRX**.
+        Please describe the goal, the intended change, and any relevant GNSS / DSP / receiver constraints clearly.
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What is the high-level goal you are trying to achieve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What feature are you proposing for GLRX?
+    validations:
+      required: true
+
+  - type: textarea
+    id: area
+    attributes:
+      label: GLRX subsystem
+      description: Which part of the receiver does this feature affect?
+      placeholder: |
+        - RF frontend / IQ source
+        - DSP primitives / signal processing
+        - PRN code generation
+        - Acquisition
+        - Tracking loops (DLL / PLL / FLL)
+        - Navigation decoding
+        - Observables / pseudorange
+        - Position solver
+        - Output formats (NMEA / UBX / telemetry)
+        - Pipeline / integration
+        - Performance / latency / throughput
+        - Embedded / no_std compatibility
+        - Testing / benchmarking
+        - Documentation
+    validations:
+      required: false
+
+  - type: textarea
+    id: gnss_context
+    attributes:
+      label: GNSS / signal context
+      description: Which signals, constellations, or receiver conditions are involved?
+      placeholder: |
+        - GPS L1 C/A / GLONASS / Galileo / BeiDou
+        - IQ file or SDR input
+        - Sample rate / center frequency
+        - Doppler range
+        - C/N₀ range
+        - Cold start / warm start / tracking / navigation
+    validations:
+      required: false
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Embedded / no_std requirements, determinism constraints, performance expectations, or safety requirements.
+      placeholder: |
+        - no_std / embedded support
+        - zero-allocation hot path
+        - deterministic output
+        - latency target
+        - SIMD or scalar fallback
+        - reproducible tests
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Do you have any alternative solutions or workarounds in mind?
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Add any other relevant context, such as platform details, benchmarks, traces, or failure modes you want to avoid.
+    validations:
+      required: false
