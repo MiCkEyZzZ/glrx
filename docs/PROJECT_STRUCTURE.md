@@ -2,6 +2,23 @@
 
 ```text
 glrx
+├── .config
+│   ├── config.toml
+│   └── nextest.toml
+├── .github
+│   ├── DISCUSSION_TEMPLATE
+│   │   └── feature-requests.yml
+│   ├── ISSUE_TEMPLATE
+│   │   ├── bug_report.yml
+│   │   ├── config.yml
+│   │   └── enhancement.yml
+│   ├── workflows
+│   │   └── semantic-pull-request.yml
+│   ├── cargo-blacklist.txt
+│   ├── CODEOWNERS
+│   ├── dependabot.yml
+│   ├── FUNDING.yml
+│   └── pull_request_template.md
 ├── docs
 │   ├── ARCHITECTURE.md
 │   ├── DSP.md
@@ -15,37 +32,6 @@ glrx
 ├── examples                       # примеры использования ресивера
 ├── scripts                        # вспомогательные скрипты (сборка, тесты)
 ├── src
-│   ├── acquisition                # поиск спутников
-│   │   ├── correlator.rs
-│   │   ├── detector.rs
-│   │   ├── fft_search.rs
-│   │   └── mod.rs
-│   ├── config
-│   │   ├── receiver_config.rs      # конфигурация ресивера
-│   │   └── mod.rs
-│   ├── interfaces                  # абстракции для интеграции с другими системами
-│   │   ├── mod.rs
-│   │   ├── glos.rs                 # чтение/запись .glos
-│   │   ├── glint.rs                # отправка observables
-│   │   └── usmet.rs                # сохранение телеметрии
-│   ├── navigation                  # декодирование навигационных сообщений
-│   │   ├── mod.rs
-│   │   ├── ephemeris.rs
-│   │   ├── frame_decoder.rs
-│   │   └── nav_data.rs
-│   ├── observables                # измерения (CN0, Doppler, псевдодальности)
-│   │   ├── mod.rs
-│   │   ├── pseudorange.rs
-│   │   ├── doppler.rs
-│   │   └── cn0.rs
-│   ├── output                     # вывод данных / интерфейсы
-│   │   ├── mod.rs
-│   │   ├── nmea.rs
-│   │   ├── ubx.rs
-│   │   └── telemetry.rs           # интеграция с GLINT/USMET
-│   ├── pipeline                   # high-level pipeline
-│   │   ├── mod.rs
-│   │   └── receiver.rs            # соединяет acquisition → tracking → solver
 │   ├── rf                         # IQ потоки / SDR / файлы
 │   │   ├── config.rs
 │   │   ├── error.rs
@@ -69,20 +55,6 @@ glrx
 │   │   ├── mixer.rs
 │   │   ├── mod.rs
 │   │   └── resampler.rs
-│   ├── solver                     # вычисление позиции / навигационное решение
-│   │   ├── mod.rs
-│   │   ├── least_squares.rs
-│   │   └── kalman.rs
-│   ├── tracking                   # tracking loops
-│   │   ├── mod.rs
-│   │   ├── dll.rs
-│   │   ├── pll.rs
-│   │   ├── fll.rs
-│   │   └── channel.rs             # channel abstraction
-│   ├── utils                      # вспомогательные функции
-│   │   ├── mod.rs
-│   │   ├── logger.rs
-│   │   └── timing.rs
 │   ├── lib.rs                     # публичная библиотека
 │   └── main.rs                    # CLI / entrypoint
 ├── tests
@@ -98,9 +70,9 @@ glrx
 ├── CONTRIBUTING.md
 ├── deny.toml
 ├── INSTALL
+├── justfile
 ├── LICENSE.APACHE
 ├── LICENSE.MIT
-├── Makefile
 ├── README.md
 ├── rust-toolchain.toml
 ├── rustfmt.toml

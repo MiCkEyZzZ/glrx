@@ -8,8 +8,20 @@
 /src/ @MiCkEyZzZ
 
 # ================================
+# Fuzzing and tests
+# ================================
+/tests/ @MiCkEyZzZ
+/benches/ @MiCkEyZzZ
+
+# ================================
+# Examples
+# ================================
+/examples/ @MiCkEyZzZ
+
+# ================================
 # CI/CD and GitHub
 # ================================
+/.github/workflows/ @MiCkEyZzZ
 /.github/ISSUE_TEMPLATE/ @MiCkEyZzZ
 /.github/pull_request_template.md @MiCkEyZzZ
 
@@ -21,7 +33,7 @@
 # ================================
 # Scripts and utilities
 # ================================
-/Makefile @MiCkEyZzZ
+/Justfile @MiCkEyZzZ
 
 # ================================
 # Root files (fallback)
