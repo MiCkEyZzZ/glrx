@@ -1,3 +1,3 @@
 fn main() {
-    println!("Hello, world!");
+    println!("GLRX — GNSS software-defined receiver");
 }

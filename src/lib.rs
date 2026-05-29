@@ -14,6 +14,11 @@
 #![warn(clippy::must_use_candidate)]
 #![warn(clippy::missing_const_for_fn)]
 #![warn(clippy::semicolon_if_nothing_returned)]
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::module_name_repetitions
+)]
 
 ////////////////////////////////////////////////////////////////////////////////
 // Публичные модули

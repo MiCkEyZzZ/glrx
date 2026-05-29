@@ -8,6 +8,14 @@ repository = "https://github.com/MiCkEyZzZ/glrx"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 edition = "2021"
+keywords = ["gnss", "gps", "sdr", "dsp", "receiver"]
+categories = [
+    "aerospace",
+    "embedded",
+    "science",
+    "algorithms",
+]
+rust-version = "1.96"
 
 [[bin]]
 name = "glrx"
@@ -28,6 +36,12 @@ rustfft = "6.4.1"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
-flamegraph = "0.6.11"
 tempfile = "3.27.0"
-tokio-console = "0.1.14"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+
+[profile.bench]
+codegen-units = 1
+lto = "fat"
