@@ -27,7 +27,7 @@ parking_lot = "0.12.5"
 rustfft = "6.4.1"
 
 [dev-dependencies]
-criterion = "0.8.2"
+criterion = { version = "0.8.2", features = ["html_reports"] }
 flamegraph = "0.6.11"
 tempfile = "3.27.0"
 tokio-console = "0.1.14"
