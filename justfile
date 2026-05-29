@@ -1,11 +1,26 @@
-# The GLRX development commands (Justfile)
+# =============================================================================
+# GLRX Development Commands
+# =============================================================================
 #
-# Purpose:
-#   Unified interface for formatting, linting, testing, documentation,
-#   embedded validation, feature-matrix checks, and CI simulation.
+# Unified interface for:
+# - formatting
+# - linting
+# - testing
+# - documentation
+# - embedded / no_std validation
+# - dependency auditing
+# - CI simulation
 #
 # Usage:
 #   just <recipe>
+#
+# Examples:
+#   just check
+#   just test
+#   just ci
+#   just bench
+#
+# =============================================================================
 
 set shell := ["bash", "-ceuo", "pipefail"]
 
@@ -27,14 +42,18 @@ fmt:
     cargo fmt --all
     taplo fmt
 
+fmt-rust:
+    cargo fmt --all
+
 fmt-toml:
     taplo fmt
-
-fmt-all: fmt fmt-toml
 
 fmt-check:
     cargo fmt --all -- --check
     taplo fmt --check
+
+toml-check:
+    taplo check
 
 # =============================================================================
 # Cargo checks
@@ -44,40 +63,81 @@ check:
     cargo check --workspace --all-targets --locked
 
 check-all-features:
-    cargo check --workspace --all-features --locked
+    cargo check --workspace --all-features --all-targets --locked
 
-check-std:
-    cargo check --workspace --features --locked
+check-no-std:
+    cargo check --workspace --no-default-features --locked
 
 # =============================================================================
 # Linting
 # =============================================================================
 
 lint:
-    cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+    cargo clippy \
+        --workspace \
+        --all-targets \
+        --all-features \
+        --locked \
+        -- \
+        -D warnings
+
+clippy-pedantic:
+    cargo clippy --all-targets --all-features -- \
+        -W clippy::pedantic
 
 # =============================================================================
 # Documentation
 # =============================================================================
 
 doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
+    RUSTDOCFLAGS="-D warnings" \
+    cargo doc --workspace --all-features --no-deps --locked
 
 docsrs:
-    RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --all-features --no-deps
+    RUSTDOCFLAGS="--cfg docsrs -D warnings" \
+    cargo +nightly doc \
+        --workspace \
+        --all-features \
+        --no-deps \
+        --locked
 
 # =============================================================================
 # Tests
 # =============================================================================
 #
-# Run the full test suite (unit + integration + determenistic property tests).
-# proptest-based tests in prop_test.rs are compiled automatically on host
+# Runs:
+# - unit tests
+# - integration tests
+# - deterministic property tests
+#
+# Property tests are compiled automatically on host targets.
+#
+# =============================================================================
 
 test:
+    cargo test --workspace --locked
+
+test-all-features:
     cargo test --workspace --all-features --locked
 
+test-release:
+    cargo test --workspace --release --locked
+
+test-doc:
+    cargo test --doc --workspace
+
 # =============================================================================
-# Advanced validation
+# Benchmarks & Validation
+# =============================================================================
+
+bench:
+    cargo +nightly bench --workspace
+
+miri:
+    cargo +nightly miri test --workspace
+
+# =============================================================================
+# Dependency & Security Checks
 # =============================================================================
 
 deny:
@@ -86,8 +146,27 @@ deny:
 audit:
     cargo audit
 
+unused-deps:
+    cargo machete
+
+# =============================================================================
+# Release Validation
+# =============================================================================
+
 release-check:
     cargo publish --dry-run
+
+# =============================================================================
+# CI Aggregate
+# =============================================================================
+
+ci:
+    just fmt-check
+    just toml-check
+    just lint
+    just check
+    just test
+    just doc
 
 # =============================================================================
 # Cleanup
