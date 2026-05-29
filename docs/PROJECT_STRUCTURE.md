@@ -58,6 +58,12 @@ glrx
 │   ├── lib.rs                     # публичная библиотека
 │   └── main.rs                    # CLI / entrypoint
 ├── tests
+│   ├── fixtures
+│   │   ├── expected
+│   │   ├── iq
+│   │   └── nav
+│   ├── integration
+│   └── system
 ├── .editorconfig
 ├── .gitignore
 ├── AUTHOR
