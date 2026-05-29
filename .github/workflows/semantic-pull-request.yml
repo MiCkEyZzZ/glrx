@@ -47,8 +47,10 @@ jobs:
              * Semantic pattern:
              * type(scope?): description
              *
-             * Examples scope for GlRX:
-             * bits, encoding, gnss, io, error, tests, ci, docs
+             * Example scopes for GLRX:
+             * dsp, acquisition, tracking, navigation,
+             * correlator, fft, filter, resampler,
+             * gnss, io, bench, ci, docs
              */
             const re = /^(feat|fix|docs|chore|perf|refactor|test|ci|build|style)(\([^)]+\))?:\s.+/i;
 
@@ -63,7 +65,7 @@ jobs:
                   "**Expected format:** `type(scope?): short description`",
                   "",
                   "**Example:**",
-                  "`feat(bits): add variable-length encoding`"
+                  "`feat(dsp): add FFT-based correlator`"
                 ].join("\n")
               });
 
@@ -83,13 +85,14 @@ jobs:
                   "**Allowed types:**",
                   "`feat`, `fix`, `docs`, `chore`, `perf`, `refactor`, `test`, `ci`, `build`, `style`",
                   "",
-                  "**Suggested scopes for Gorka:**",
-                  "`bits`, `encoding`, `gnss`, `io`, `error`, `tests`, `ci`, `docs`",
+                  "**Suggested scopes for GLRX:**",
+                  "`dsp`, `acquisition`, `tracking`, `navigation`, `correlator`, `fft`, `filter`, `resampler`, `gnss`, `io`, `bench`, `ci`, `docs`",
                   "",
                   "**Examples:**",
-                  "- `feat(bits): add bit packing optimization`",
-                  "- `fix(gnss): correct glonass frame parsing`",
-                  "- `perf(encoding): reduce allocations in delta encoder`",
+                  "- `feat(dsp): add SIMD carrier mixer`",
+                  "- `fix(tracking): correct DLL discriminator sign`",
+                  "- `perf(fft): reduce temporary allocations`",
+                  "- `test(correlator): add EPL edge-case coverage`",
                   "",
                   "Please update the PR title."
                 ].join("\n")
