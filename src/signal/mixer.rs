@@ -88,7 +88,7 @@ impl Nco {
     ) -> Self {
         Self {
             phase: 0.0,
-            phase_step: (TAU as f64 * freq_hz / sample_rate_hz) as f32,
+            phase_step: (f64::from(TAU) * freq_hz / sample_rate_hz) as f32,
         }
     }
 
@@ -100,13 +100,12 @@ impl Nco {
         freq_hz: f64,
         sample_rate_hz: f64,
     ) {
-        self.phase_step = (TAU as f64 * freq_hz / sample_rate_hz) as f32;
+        self.phase_step = (f64::from(TAU) * freq_hz / sample_rate_hz) as f32;
     }
 
     /// Продвигает осциллятор на один шаг и возвращает комплексный сэмпл.
     ///
     /// Возвращает значение `exp(j·phase)` в виде `(cos, sin)`.
-    #[inline(always)]
     pub fn advance(&mut self) -> Complex32 {
         let (sin, cos) = self.phase.sin_cos();
 
@@ -187,8 +186,8 @@ impl Mixer {
         &mut self,
         delta_hz: f64,
     ) {
-        let step = self.nco.phase_step_rad() as f64;
-        let new_freq = (step / (TAU as f64)) * self.sample_rate_hz + delta_hz;
+        let step = f64::from(self.nco.phase_step_rad());
+        let new_freq = (step / f64::from(TAU)) * self.sample_rate_hz + delta_hz;
 
         self.nco.set_frequency(new_freq, self.sample_rate_hz);
     }
@@ -201,7 +200,7 @@ impl Mixer {
 
     /// Возвращает текущую фазу NCO (радианы).
     #[must_use]
-    pub fn phase_rad(&self) -> f32 {
+    pub const fn phase_rad(&self) -> f32 {
         self.nco.phase_rad()
     }
 
@@ -231,7 +230,7 @@ impl Mixer {
     }
 
     /// Сбрасывает фазу микшера.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.nco.reset();
     }
 }
@@ -256,6 +255,7 @@ pub fn mix_shift(
 /// - `freq_hz` — частота сигнала
 /// - `sample_rate_hz` — частота дискретизации
 /// - `n` — количество отсчётов
+#[must_use]
 pub fn generate_carrier(
     freq_hz: f64,
     sample_rate_hz: f64,

@@ -196,6 +196,13 @@ impl SoapySource {
     ///
     /// * `driver_args` — `SoapySDR` device filter string, e.g. `"driver=rtlsdr"`,
     ///   `"driver=hackrf"`, or `""` to use the first available device.
+    ///
+    /// # Errors
+    ///
+    /// Returns:
+    /// - `RfError::Config` if the RF configuration is invalid
+    /// - `RfError::Sdr` if the SDR backend fails to initialize
+    /// - Underlying I/O or driver-specific errors if device creation fails
     pub fn open(
         driver_args: &str,
         config: RfConfig,

@@ -56,6 +56,12 @@ pub struct FileSource {
 
 impl FileSource {
     /// Open a file with the given RF configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns:
+    /// - [`RfError::Config`] if the RF configuration is invalid
+    /// - [`RfError::Io`] if the file cannot be opened
     pub fn open<P: AsRef<Path>>(
         path: P,
         config: RfConfig,
@@ -86,6 +92,12 @@ impl FileSource {
     }
 
     /// Total number of complex samples in the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns:
+    /// - [`RfError::Io`] if the file cannot be opened
+    /// - [`RfError::Io`] if file metadata cannot be read
     pub fn total_samples(&self) -> RfResult<u64> {
         let file = File::open(&self.path)?;
         let bytes = file.metadata()?.len();
@@ -98,7 +110,13 @@ impl FileSource {
         Ok(bytes / bps)
     }
 
-    /// Duration of the file in seconds.
+    /// Total number of complex samples in the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns:
+    /// - [`RfError::Io`] if the file cannot be opened
+    /// - [`RfError::Io`] if file metadata cannot be read
     pub fn duration_s(&self) -> RfResult<f64> {
         Ok(self.total_samples()? as f64 / self.config.sample_rate_hz)
     }

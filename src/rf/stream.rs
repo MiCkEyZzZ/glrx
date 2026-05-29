@@ -20,7 +20,7 @@
 //! };
 //!
 //! let cfg = RfConfig::default();
-//! let (mut producer, mut consumer) = IqStream::new(cfg, 16, 2048, OverflowPolicy::DropOldest);
+//! let (mut producer, mut consumer) = IqStream::create(cfg, 16, 2048, OverflowPolicy::DropOldest);
 //!
 //! // Producer (SDR thread):
 //! let samples = vec![num_complex::Complex32::new(0.0, 0.0); 2048];
@@ -162,18 +162,18 @@ impl StreamProducer {
     /// Если буфер заполнен, поведение зависит от [`OverflowPolicy`]:
     /// - [`OverflowPolicy::DropOldest`] — самый старый слот удаляется
     /// - [`OverflowPolicy::ErrorOnOverflow`] — возвращается ошибка
-    /// - [`OverflowPolicy::BlockProducer`] — производитель ждёт освобождения
-    ///   слота
+    /// - [`OverflowPolicy::BlockProducer`] — производитель ждёт освобождения слота
     ///
-    /// # Параметры
+    /// # Parameters
     ///
     /// * `samples` — IQ-выборки
     /// * `start_sample` — индекс первого сэмпла
     ///
-    /// # Ошибки
+    /// # Errors
     ///
-    /// Возвращает [`RfError::BufferOverflow`], если используется политика
-    /// [`OverflowPolicy::ErrorOnOverflow`].
+    /// This function returns [`RfError::BufferOverflow`] if
+    /// [`OverflowPolicy::ErrorOnOverflow`] is used and the buffer is full.
+    /// In that case, `dropped` contains the number of samples that were not enqueued.
     pub fn write(
         &self,
         samples: &[Complex32],
@@ -334,14 +334,13 @@ impl StreamConsumer {
 impl IqStream {
     /// Create a new ring buffer and return `(producer, consumer)`.
     ///
-    /// * `config`    — RF configuration (passed through to emitted
-    ///   [`IqBlock`]s).
-    /// * `capacity`  — number of slots in the ring (must be ≥ 2).
-    /// * `slot_size` — samples per slot.  Choose to match your hardware block
-    ///   size, e.g. `2048` for 1 ms at 2.048 Msps.
-    /// * `policy`    — what to do when the buffer is full.
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - `capacity < 2`
+    /// - `slot_size == 0`
     #[must_use]
-    pub fn new(
+    pub fn create(
         config: RfConfig,
         capacity: usize,
         slot_size: usize,
@@ -349,7 +348,9 @@ impl IqStream {
     ) -> (StreamProducer, StreamConsumer) {
         assert!(capacity >= 2, "capacity must be at least 2");
         assert!(slot_size > 0, "slot_size must be positive");
+
         let buf = Arc::new(SharedBuffer::new(config, capacity, slot_size, policy));
+
         (
             StreamProducer {
                 buf: Arc::clone(&buf),
@@ -448,7 +449,7 @@ mod tests {
         capacity: usize,
         policy: OverflowPolicy,
     ) -> (StreamProducer, StreamConsumer) {
-        IqStream::new(RfConfig::default(), capacity, SLOT, policy)
+        IqStream::create(RfConfig::default(), capacity, SLOT, policy)
     }
 
     #[test]

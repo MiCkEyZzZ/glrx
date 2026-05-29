@@ -52,7 +52,6 @@ impl FftEngine {
     }
 
     /// Выполняет **прямое FFT** над буфером *in-place*.
-    #[must_use]
     pub fn fft_inplace(
         &mut self,
         buf: &mut [Complex32],
@@ -89,7 +88,7 @@ impl FftEngine {
 
         let mut buf = input.to_vec();
 
-        let _ = self.fft_inplace(&mut buf);
+        let () = self.fft_inplace(&mut buf);
 
         buf
     }
@@ -137,18 +136,18 @@ impl FftEngine {
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-            .map(|(i, _)| i)
-            .unwrap_or(0)
+            .map_or(0, |(i, _)| i)
     }
 
     /// Преобразует индекс FFT-бина в частоту (Гц).
+    #[must_use]
     pub fn bin_to_freq(
         &self,
         bin: usize,
         sample_rate_hz: f64,
     ) -> f64 {
-        let k = bin as isize;
-        let n = self.size as isize;
+        let k = bin.cast_signed();
+        let n = self.size.cast_signed();
         let shifted = if k > n / 2 { k - n } else { k };
 
         shifted as f64 * sample_rate_hz / n as f64
@@ -166,8 +165,8 @@ impl FftEngine {
         let mut sig = signal.to_vec();
         let mut tmpl = template.to_vec();
 
-        let _ = self.fft_inplace(&mut sig);
-        let _ = self.fft_inplace(&mut tmpl);
+        let () = self.fft_inplace(&mut sig);
+        let () = self.fft_inplace(&mut tmpl);
 
         let mut product: Vec<Complex32> = sig
             .iter()
@@ -180,7 +179,7 @@ impl FftEngine {
         product.into_iter().map(|s| s.norm_sqr()).collect()
     }
 
-    /// То же самое, что [`cross_correlate_power`], но возвращает **комплексный
+    /// То же самое, что `cross_correlate_power`, но возвращает **комплексный
     /// результат IFFT**.
     ///
     /// Это позволяет сохранить **фазовую информацию**
@@ -196,8 +195,8 @@ impl FftEngine {
         let mut sig = signal.to_vec();
         let mut tmpl = template.to_vec();
 
-        let _ = self.fft_inplace(&mut sig);
-        let _ = self.fft_inplace(&mut tmpl);
+        let () = self.fft_inplace(&mut sig);
+        let () = self.fft_inplace(&mut tmpl);
 
         let mut product: Vec<Complex32> = sig
             .iter()

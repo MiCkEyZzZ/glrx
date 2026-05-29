@@ -177,7 +177,7 @@ pub fn normalize(samples: &mut [Complex32]) {
 /// # Аргументы
 ///
 /// * `prompt_accumulations` — выборка prompt-корреляций за несколько эпох
-///   (типично 20 значений = 20 мс при T_coh = 1 мс)
+///   (типично 20 значений = 20 мс при `T_coh` = 1 мс)
 /// * `coherent_time_s` — длительность одного интервала интеграции (секунды)
 ///
 /// # Возвращает
@@ -185,6 +185,7 @@ pub fn normalize(samples: &mut [Complex32]) {
 /// C/N₀ в **дБ-Гц**. Типичные значения для GPS L1 C/A: 35–50 дБ-Гц.
 ///
 /// Возвращает `0.0` если накоплений менее 2.
+#[must_use]
 pub fn cn0_estimate(
     prompt_accumulations: &[Complex32],
     coherent_time_s: f64,
@@ -223,6 +224,7 @@ pub fn cn0_estimate(
 /// # Возвращает
 ///
 /// C/N₀ в дБ-Гц.
+#[must_use]
 pub fn cn0_estimate_iwbp(
     narrow_band_power: f32,
     wide_band_power: f32,

@@ -37,15 +37,36 @@ impl RfConfig {
     }
 
     /// Number of samples in `duration`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the computed sample count is:
+    /// - non-finite (`NaN` or infinite)
+    /// - negative
     #[must_use]
     pub fn samples_in(
         &self,
         duration: Duration,
     ) -> usize {
-        (self.sample_rate_hz * duration.as_secs_f64()) as usize
+        let samples = self.sample_rate_hz * duration.as_secs_f64();
+
+        assert!(samples.is_finite(), "computed sample count must be finite");
+
+        assert!(samples >= 0.0, "computed sample count must be non-negative");
+
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        {
+            samples.floor() as usize
+        }
     }
 
-    /// Validate configuration fields
+    /// Validate configuration fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RfError::Config`] if:
+    /// - `sample_rate_hz <= 0.0`
+    /// - `center_freq_hz <= 0.0`
     pub fn validate(&self) -> RfResult<()> {
         if self.sample_rate_hz <= 0.0 {
             return Err(RfError::Config(format!(
