@@ -1,0 +1,14 @@
+[build]
+target-dir = "target"
+
+# =========================================================
+# Native performance (DSP / FFT / correlator)
+# =========================================================
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native"]
+
+# =========================================================
+# Optional: deterministic release behavior
+# =========================================================
+[env]
+RUST_BACKTRACE = "1"

@@ -2,6 +2,8 @@
 
 ```text
 glrx
+├── .cargo
+│   └── config.toml
 ├── .config
 │   ├── config.toml
 │   └── nextest.toml
@@ -29,6 +31,9 @@ glrx
 ├── examples                       # примеры использования ресивера
 ├── scripts                        # вспомогательные скрипты (сборка, тесты)
 ├── src
+│   ├── acquisition                # поиск спутников
+│   │   ├── correlator.rs
+│   │   └── mod.rs
 │   ├── rf                         # IQ потоки / SDR / файлы
 │   │   ├── config.rs
 │   │   ├── error.rs
@@ -51,6 +56,7 @@ glrx
 │   │   ├── filter.rs
 │   │   ├── mixer.rs
 │   │   ├── mod.rs
+│   │   ├── prn_code.rs
 │   │   └── resampler.rs
 │   ├── lib.rs                     # публичная библиотека
 │   └── main.rs                    # CLI / entrypoint

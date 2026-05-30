@@ -9,6 +9,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **cargo/config.toml**:
+  - добавил `target-dir` и `rustflags` для оптимизации нативного производительности
+
+- **justfile**:
+  - добавил команды для сборки проекта: `build`, `build-release`, `build-perf`,
+    `build-native`
+
 - **signal**
   - добавлен `mixer.rs`:
     - `Nco` — фазовый аккумулятор с advance(), set_frequency(), reset(), generate(n)
