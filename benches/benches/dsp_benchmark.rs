@@ -8,9 +8,16 @@
 //! * 8192 samples = wider acquisition window
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use glrx::{
-    compute_power, correlate, correlator_epl, generate_carrier, mix_shift, normalize,
-    resampler::Decimator, shift_code, FftEngine, FirFilter, Mixer, Window,
+use glrx::signal::{
+    correlator::{
+        base::{correlate, correlator_epl},
+        code_utilities::shift_code,
+        normalisation::{compute_power, normalize},
+    },
+    fft::FftEngine,
+    filter::{FirFilter, Window},
+    mixer::{generate_carrier, mix_shift, Mixer},
+    resampler::Decimator,
 };
 use num_complex::Complex32;
 use std::hint::black_box;

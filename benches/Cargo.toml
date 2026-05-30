@@ -13,4 +13,5 @@ num-complex = "0.4.6"
 
 [[bench]]
 name = "dsp_benchmark"
+path = "benches/dsp_benchmark.rs"
 harness = false
