@@ -12,6 +12,7 @@ Cargo.lock
 .idea/
 .vscode/
 .zed/
+.vs/
 .trunk
 *.iml
 out/
