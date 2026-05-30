@@ -34,6 +34,22 @@ default:
 help:
     @just --list
 
+# =========================================================
+# Build modes
+# =========================================================
+
+build:
+    cargo build --workspace
+
+build-release:
+    cargo build --release
+
+build-perf:
+    cargo build --profile perf
+
+build-native:
+    RUSTFLAGS="-C target-cpu=native" cargo build --release
+
 # =============================================================================
 # Formatting
 # =============================================================================
