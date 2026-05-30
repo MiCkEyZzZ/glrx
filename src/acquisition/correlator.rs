@@ -264,7 +264,7 @@ fn apply_doppler(
     doppler_hz: f64,
     sample_rate_hz: f64,
 ) -> Vec<Complex32> {
-    let mut nco = Nco::new(-doppler_hz, sample_rate_hz);
+    let mut nco = Nco::new(doppler_hz, sample_rate_hz);
 
     signal.iter().map(|&s| s * nco.advance()).collect()
 }
@@ -395,7 +395,7 @@ mod tests {
         let peak_idx = power
             .iter()
             .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .max_by(|(_, a), (_, b)| a.total_cmp(b))
             .map(|(i, _)| i)
             .unwrap();
 

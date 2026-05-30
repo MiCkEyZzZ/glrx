@@ -488,14 +488,13 @@ mod tests {
     }
 
     #[test]
-    fn test_resample_2048_produces_each_chip_1_or_2_times() {
+    fn test_resample_2048_produces_each_chip_2_or_3_times() {
         // At 2.048 Msps, 2048 samples/ms, 1023 chips/ms →
-        // each chip appears either 2 times (freq) or 1 time. No chip skipped.
+        // each chip appears either 2 times or 3 times.
         let cache = PrnCodeCache::new();
         let resampled = cache.resample_gps(1, 2048).unwrap();
         let original = cache.get_gps(1).unwrap();
 
-        // Count how many times each chip appears
         let mut counts = vec![0u32; 1023];
 
         for i in 0..2048 {
@@ -503,17 +502,24 @@ mod tests {
             counts[chip_idx] += 1;
         }
 
-        // All chips must appear 1 or 2 times
+        let mut three_count = 0u32;
+
         for (chip_idx, &count) in counts.iter().enumerate() {
-            assert!(
-                count == 2 || count == 3,
-                "chip {} appears {} times",
-                chip_idx,
-                count
-            );
+            match count {
+                2 => {}
+                3 => three_count += 1,
+                _ => panic!(
+                    "chip {} appears {} times (expected 2 or 3)",
+                    chip_idx, count
+                ),
+            }
         }
 
-        // Verify values match
+        assert_eq!(
+            three_count, 2,
+            "expected exactly two chips to appear 3 times"
+        );
+
         for i in 0..2048 {
             let chip_idx = i * 1023 / 2048;
             assert_eq!(resampled[i], original[chip_idx] as f32, "sample {}", i);
