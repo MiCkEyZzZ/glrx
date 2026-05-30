@@ -23,10 +23,10 @@ cargo bench --bench dsp_benchmark
 
 | Operation                      | Time      | Throughput     |
 | ------------------------------ | --------- | -------------- |
-| `Mixer::mix (2048)`            | ~15.17 µs | ~135.0 Melem/s |
-| `Mixer::mix_inplace (2048)`    | ~14.87 µs | ~137.7 Melem/s |
-| `mix_shift / stateless (2048)` | ~15.16 µs | ~135.1 Melem/s |
-| `generate_carrier (2048)`      | ~40.52 µs | ~50.5 Melem/s  |
+| `Mixer::mix (2048)`            | ~14.84 µs | ~137.0 Melem/s |
+| `Mixer::mix_inplace (2048)`    | ~14.61 µs | ~140.1 Melem/s |
+| `mix_shift / stateless (2048)` | ~15.00 µs | ~136.4 Melem/s |
+| `generate_carrier (2048)`      | ~40.03 µs | ~51.1 Melem/s  |
 
 ### FIR Filter
 
