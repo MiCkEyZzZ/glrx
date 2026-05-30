@@ -1,7 +1,8 @@
-# Дубликаты зависимостей
+# Dependency duplication policy
 [bans]
 multiple-versions    = "warn"
-# workspace-crates используют path-зависимости без версии — это нормально для pre-0.1
+
+# Workspace crates may use wildcard path dependencies during early development.
 wildcards            = "warn"
 allow-wildcard-paths = true
 
@@ -9,7 +10,8 @@ deny = [
     { name = "openssl", version = "<0.10.60" },
 ]
 
-# Пропускаем дубли которые тянет egui/eframe/winit — мы не контролируем их граф
+# Duplicates tolerated for upstream GUI/platform stacks that are not directly
+# controlled by this workspace (egui/eframe/winit ecosystem).
 skip = [
     { name = "bitflags" },
     { name = "block2" },
@@ -52,7 +54,7 @@ skip = [
 
 skip-tree = []
 
-# Уязвимости
+# Security advisories
 [advisories]
 yanked       = "deny"
 unmaintained = "all"
@@ -61,7 +63,7 @@ ignore       = [
     { id = "RUSTSEC-2024-0436", reason = "transitive via image crate, no direct impact on GLOS" },
 ]
 
-# Лицензии
+# License policy
 [licenses]
 allow = [
     "MIT",
@@ -74,14 +76,14 @@ allow = [
     "Unicode-3.0",
     "BSL-1.0",
     "OFL-1.1",
-    # Требуется для epaint_default_fonts (встроенные шрифты egui)
+    # Required by epaint_default_fonts (embedded egui fonts).
     "Ubuntu-font-1.0",
     "NCSA",
     "CC0-1.0",
 ]
 private = { ignore = true }
 
-# Источники
+# Source policy
 [sources]
 unknown-git       = "deny"
 unknown-registry  = "deny"
