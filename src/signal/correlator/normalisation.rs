@@ -53,7 +53,7 @@ pub fn compute_power(samples: &[Complex32]) -> f32 {
     }
 
     // Сумма квадратов амплитуд
-    let total: f32 = samples.iter().map(|s| s.norm_sqr()).sum();
+    let total: f32 = samples.iter().map(Complex32::norm_sqr).sum();
 
     // Средняя мощность
     total / samples.len() as f32
@@ -198,7 +198,7 @@ pub fn cn0_estimate(
     // Средняя когерентная мощность: mean(|P|²)
     let p_coh: f32 = prompt_accumulations
         .iter()
-        .map(|p| p.norm_sqr())
+        .map(Complex32::norm_sqr)
         .sum::<f32>()
         / n;
 

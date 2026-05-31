@@ -26,6 +26,10 @@ pub struct FftEngine {
 
 impl FftEngine {
     /// Создаёт новый FFT-движок для преобразований длины `size`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `size == 0`.
     #[must_use]
     pub fn new(size: usize) -> Self {
         assert!(size > 0, "FFT size must be positive");
@@ -52,6 +56,10 @@ impl FftEngine {
     }
 
     /// Выполняет **прямое FFT** над буфером *in-place*.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `buf.len() != self.size`.
     pub fn fft_inplace(
         &mut self,
         buf: &mut [Complex32],
@@ -63,6 +71,10 @@ impl FftEngine {
     }
 
     /// Выполняет **обратное FFT** *in-place*.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `buf.len() != self.size`.
     pub fn ifft_inplace(
         &mut self,
         buf: &mut [Complex32],
@@ -80,6 +92,10 @@ impl FftEngine {
     }
 
     /// Выполняет прямое FFT и возвращает новый `Vec`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `input.len() != self.size`.
     pub fn fft(
         &mut self,
         input: &[Complex32],
@@ -94,6 +110,10 @@ impl FftEngine {
     }
 
     /// Выполняет обратное FFT и возвращает новый `Vec`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `input.len() != self.size`.
     pub fn ifft(
         &mut self,
         input: &[Complex32],
@@ -128,6 +148,11 @@ impl FftEngine {
     }
 
     /// Возвращает индекс бина с **максимальной мощностью**.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the power spectrum contains a `NaN`, because peak search
+    /// uses `partial_cmp(...).unwrap()`.
     pub fn peak_bin(
         &mut self,
         input: &[Complex32],
@@ -154,6 +179,10 @@ impl FftEngine {
     }
 
     /// Циклическая взаимная корреляция через FFT.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `signal.len() != self.size` or `template.len() != self.size`.
     pub fn cross_correlate_power(
         &mut self,
         signal: &[Complex32],
@@ -182,8 +211,9 @@ impl FftEngine {
     /// То же самое, что `cross_correlate_power`, но возвращает **комплексный
     /// результат IFFT**.
     ///
-    /// Это позволяет сохранить **фазовую информацию**
-    /// корреляции.
+    /// # Panics
+    ///
+    /// Panics if `signal.len() != self.size` or `template.len() != self.size`.
     pub fn cross_correlate(
         &mut self,
         signal: &[Complex32],
