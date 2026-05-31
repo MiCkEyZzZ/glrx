@@ -32,7 +32,12 @@ use std::f32::consts::TAU;
 
 use num_complex::Complex32;
 
-use super::{IqBlock, IqSource, RfConfig, RfResult, SourceMetrics};
+use crate::rf::{
+    config::RfConfig,
+    error::RfResult,
+    iq_source::{IqBlock, IqSource},
+    metrics::SourceMetrics,
+};
 
 /// A sunthetic IQ source that generates a single-tone complex sinusoid.
 ///

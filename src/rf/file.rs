@@ -35,8 +35,12 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use num_complex::Complex32;
 
 use crate::rf::{
+    config::RfConfig,
+    error::{RfError, RfResult},
+    format::SampleFormat,
+    iq_source::{IqBlock, IqSource},
+    metrics::SourceMetrics,
     normalise::{norm_f32, norm_i16, norm_i8},
-    IqBlock, IqSource, RfConfig, RfError, RfResult, SampleFormat, SourceMetrics,
 };
 
 /// IQ source backed by a binary file.
@@ -230,7 +234,7 @@ impl IqSource for FileSource {
     fn read_block(
         &mut self,
         n: usize,
-    ) -> RfResult<super::IqBlock> {
+    ) -> RfResult<IqBlock> {
         let start_sample = self.next_samples;
         let mut samples: Vec<Complex32> = Vec::with_capacity(n);
 
