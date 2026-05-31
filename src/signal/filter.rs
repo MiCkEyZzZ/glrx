@@ -231,7 +231,7 @@ impl FirFilter {
     /// После вызова фильтр ведёт себя так, как будто обработка начинается с
     /// нуля.
     pub fn reset(&mut self) {
-        for s in self.state.iter_mut() {
+        for s in &mut self.state {
             *s = Complex32::default();
         }
     }

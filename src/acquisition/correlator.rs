@@ -57,7 +57,7 @@ pub struct AcquisitionResult {
     pub prn: u8,
     /// Estimated Doppler frequency shift in Hz
     pub doppler_hz: f64,
-    /// Code phase of the correlation peak in samples (0..block_size)
+    /// Code phase of the correlation peak in samples (`0..block_size`)
     pub code_phase_samples: usize,
     /// Code phase converted to chips (0.0..1023.0)
     pub code_phase_chips: f64,
@@ -76,11 +76,11 @@ pub struct AcquisitionResult {
 pub struct AcquisitionCorrelator {
     /// FFT Engine
     fft: FftEngine,
-    /// block_size = number of IQ samples per code period (1ms)
+    /// `block_size` = number of IQ samples per code period (1ms)
     block_size: usize,
     /// Receiver sample rate in Hz
     sample_rate_hz: f64,
-    /// Precomputed FFT(prn_code) for each PRN
+    /// Precomputed `FFT(prn_code)` for each PRN
     /// Key: PRN 1-32, Value: complex spectrum of the resampled code.
     prn_ffts: HashMap<u8, Vec<Complex32>>,
 }
@@ -91,8 +91,9 @@ impl AcquisitionCorrelator {
     /// # Arguments
     ///
     /// - `block_size` - number of IQ samples per code period (e.g. 2048 for
-    /// 2.048 Msps GPS L1 C/A at 1ms integration).
+    ///   2.048 Msps GPS L1 C/A at 1ms integration).
     /// - `sample_rate_hz` - IQ sample rate in Hz.
+    #[must_use]
     pub fn new(
         block_size: usize,
         sample_rate_hz: f64,
@@ -148,7 +149,7 @@ impl AcquisitionCorrelator {
         signal: &[Complex32],
         prn: u8,
     ) -> Option<Vec<f32>> {
-        let code_fft = self.prn_ffts.get(&prn)?.to_vec();
+        let code_fft = self.prn_ffts.get(&prn)?.clone();
 
         assert_eq!(signal.len(), self.block_size);
 
@@ -243,16 +244,19 @@ impl AcquisitionCorrelator {
     }
 
     /// Block size this correlator was built for.
-    pub fn block_size(&self) -> usize {
+    #[must_use]
+    pub const fn block_size(&self) -> usize {
         self.block_size
     }
 
     /// Sample rate this correlator was built for.
-    pub fn sample_rate_hz(&self) -> f64 {
+    #[must_use]
+    pub const fn sample_rate_hz(&self) -> f64 {
         self.sample_rate_hz
     }
 
     /// The number of PRNs currently precomputed.
+    #[must_use]
     pub fn precomputed_count(&self) -> usize {
         self.prn_ffts.len()
     }
@@ -328,7 +332,7 @@ mod tests {
         let power = acq.correlate_power(&signal, 1).unwrap();
 
         for &p in &power {
-            assert!(p.abs() < 1e-6, "expected zero power, got {}", p);
+            assert!(p.abs() < 1e-6, "expected zero power, got {p}");
         }
     }
 
@@ -365,7 +369,7 @@ mod tests {
             .map(|(i, _)| i)
             .unwrap();
 
-        assert_eq!(peak_idx, 0, "expected peak at lag 0, got {}", peak_idx);
+        assert_eq!(peak_idx, 0, "expected peak at lag 0, got {peak_idx}");
     }
 
     #[test]
@@ -426,8 +430,8 @@ mod tests {
         let power_matched = acq.correlate_power(&signal, 1).unwrap();
         let power_wrong = acq.correlate_power(&signal, 2).unwrap();
 
-        let peak_matched = power_matched.iter().cloned().fold(0.0f32, f32::max);
-        let peak_wrong = power_wrong.iter().cloned().fold(0.0f32, f32::max);
+        let peak_matched = power_matched.iter().copied().fold(0.0f32, f32::max);
+        let peak_wrong = power_wrong.iter().copied().fold(0.0f32, f32::max);
 
         assert!(
             peak_matched > peak_wrong * 10.0,

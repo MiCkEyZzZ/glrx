@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 /// G2 tap pairs for PRN 1-32. Index 0 -> PRN 1.
-/// Format: (tap_a, tap_b) where bits are numbered 1-20.
+/// Format: (`tap_a`, `tap_b`) where bits are numbered 1-20.
 const G2_TAPS: [(u8, u8); 32] = [
     (2, 6),  // PRN  1
     (3, 7),  // PRN  2
@@ -71,6 +71,7 @@ impl PrnCodeCache {
     /// Build the cache for GPS PRN 1-32.
     ///
     /// Generation is O(32 * 1023) ≈ 33k operations — negligible at startup
+    #[must_use]
     pub fn new() -> Self {
         let mut gps = HashMap::with_capacity(32);
 
@@ -93,7 +94,8 @@ impl PrnCodeCache {
     ///
     /// GLONASS uses 511-chip M-sequences (x⁹ + x⁵ + 1) identical for all
     /// satellites (FDMA distinguishes satellites by carrier frequency).
-    pub fn get_glonass(
+    #[must_use]
+    pub const fn get_glonass(
         &self,
         _slot: u8,
     ) -> Option<&[i8]> {
@@ -104,7 +106,8 @@ impl PrnCodeCache {
     ///
     /// Galileo uses memory codes (not shift-register generated) defined
     /// in the Galileo OS SIS ICD.
-    pub fn get_galileo_e1(
+    #[must_use]
+    pub const fn get_galileo_e1(
         &self,
         _svid: u8,
     ) -> Option<&[i8]> {
@@ -126,6 +129,7 @@ impl PrnCodeCache {
     /// # Returns
     ///
     /// `None` if `prn` is not in 1..=32.
+    #[must_use]
     pub fn resample_gps(
         &self,
         prn: u8,
@@ -136,7 +140,7 @@ impl PrnCodeCache {
         let out = (0..n_samples)
             .map(|i| {
                 let chip_idx = (i * n_chips) / n_samples;
-                chips[chip_idx] as f32
+                f32::from(chips[chip_idx])
             })
             .collect();
 
@@ -153,6 +157,7 @@ impl PrnCodeCache {
     /// * `phase_offset_chips` — fractional chip offset to apply (0.0–1023.0)
     ///
     /// Wraps around modulo `GPS_CODE_LENGTH`.
+    #[must_use]
     pub fn resample_gps_with_phase(
         &self,
         prn: u8,
@@ -165,7 +170,7 @@ impl PrnCodeCache {
             .map(|i| {
                 let chip_f = i as f64 * n_chips / n_samples as f64 + phase_offset_chips;
                 let chip_idx = chip_f.floor() as usize % GPS_CODE_LENGTH;
-                chips[chip_idx] as f32
+                f32::from(chips[chip_idx])
             })
             .collect();
 
@@ -186,18 +191,18 @@ impl Default for PrnCodeCache {
 /// # Algorithm
 ///
 /// 1. Initialise G1 and G2 registers to all-ones.
-/// 2. For each chip: output = G1[10] XOR G2[tap_a] XOR G2[tap_b]
+/// 2. For each chip: output = G1[10] XOR G2[`tap_a`] XOR G2[`tap_b`]
 /// 3. Advance both registers using their feedback polynomials.
 /// 4. Convert 0 → +1, 1 → −1 (NRZ encoding).
 ///
 /// # Panic
 ///
 /// Panics if `prn < 1 || prn > 32`
+#[must_use]
 pub fn generate_gps_ca(prn: u8) -> Vec<i8> {
     assert!(
-        prn >= 1 && prn <= 32,
-        "GPS PRN must be in range 1..=32, got {}",
-        prn
+        (1..=32).contains(&prn),
+        "GPS PRN must be in range 1..=32, got {prn}",
     );
 
     let (tap_a, tap_b) = G2_TAPS[(prn - 1) as usize];
@@ -234,8 +239,9 @@ pub fn generate_gps_ca(prn: u8) -> Vec<i8> {
 /// For a maximal-length code of length N, the auto-correlation is N at
 /// lag 0 and -1 all other lags. Gold codes are slightly worse (-1 or -64 for
 /// GPS C/A) but follow the same principle.
+#[must_use]
 pub fn autocorrelation_at_zero(code: &[i8]) -> i64 {
-    code.iter().map(|&c| c as i64 * c as i64).sum()
+    code.iter().map(|&c| i64::from(c) * i64::from(c)).sum()
 }
 
 /// Compute the full circular **cross-correlation** between two ±1 codes.
@@ -246,6 +252,7 @@ pub fn autocorrelation_at_zero(code: &[i8]) -> i64 {
 /// # Panics
 ///
 /// Panics if `code_a.len() != code_b.len()`.
+#[must_use]
 pub fn circular_cross_correlation(
     code_a: &[i8],
     code_b: &[i8],
@@ -257,7 +264,7 @@ pub fn circular_cross_correlation(
     (0..n)
         .map(|lag| {
             (0..n)
-                .map(|i| code_a[i] as i32 * code_b[(i + lag) % n] as i32)
+                .map(|i| i32::from(code_a[i]) * i32::from(code_b[(i + lag) % n]))
                 .sum()
         })
         .collect()
@@ -266,6 +273,7 @@ pub fn circular_cross_correlation(
 /// Compute autocorrelation for a single lag efficiently.
 ///
 /// Equivalent to one element of `circular_cross_correlation(code, code)`.
+#[must_use]
 pub fn autocorrelation_at_lag(
     code: &[i8],
     lag: usize,
@@ -273,7 +281,7 @@ pub fn autocorrelation_at_lag(
     let n = code.len();
 
     (0..n)
-        .map(|i| code[i] as i32 * code[(i + lag) % n] as i32)
+        .map(|i| i32::from(code[i]) * i32::from(code[(i + lag) % n]))
         .sum()
 }
 
@@ -288,7 +296,7 @@ mod tests {
     #[test]
     fn test_gps_code_length_is_1023() {
         for prn in 1u8..=32 {
-            assert_eq!(generate_gps_ca(prn).len(), GPS_CODE_LENGTH, "PRN {}", prn);
+            assert_eq!(generate_gps_ca(prn).len(), GPS_CODE_LENGTH, "PRN {prn}");
         }
     }
 
@@ -298,7 +306,7 @@ mod tests {
             let code = generate_gps_ca(prn);
 
             for &chip in &code {
-                assert!(chip == 1 || chip == -1, "PRN {}: chip = {}", prn, chip);
+                assert!(chip == 1 || chip == -1, "PRN {prn}: chip = {chip}");
             }
         }
     }
@@ -308,15 +316,13 @@ mod tests {
         // GPS Gold codes are nearly balanced: count(+1) ≈ count(−1) ≈ 511-512
         for prn in 1u8..=32 {
             let code = generate_gps_ca(prn);
-            let ones: i64 = code.iter().map(|&c| c as i64).sum();
+            let ones: i64 = code.iter().map(|&c| i64::from(c)).sum();
 
             // For GPS C/A: sum should be exactly −1 (512 ones, 511 neg-ones)
             // Tolerance of ±3 to allow for any minor implementation differences
             assert!(
                 ones.abs() <= 3,
-                "PRN {} balance: sum = {} (expected ~0 or −1)",
-                prn,
-                ones
+                "PRN {prn} balance: sum = {ones} (expected ~0 or −1)",
             );
         }
     }
@@ -332,7 +338,7 @@ mod tests {
         let expected = [-1i8, -1, 1, 1, -1, 1, 1, 1, 1, 1];
 
         for (i, (&got, &exp)) in code.iter().zip(expected.iter()).enumerate() {
-            assert_eq!(got, exp, "PRN 1 chip {}: got {} expected {}", i, got, exp);
+            assert_eq!(got, exp, "PRN 1 chip {i}: got {got} expected {exp}");
         }
     }
 
@@ -359,7 +365,7 @@ mod tests {
             let code = generate_gps_ca(prn);
             let ac = autocorrelation_at_zero(&code);
 
-            assert_eq!(ac, GPS_CODE_LENGTH as i64, "PRN {}", prn);
+            assert_eq!(ac, GPS_CODE_LENGTH as i64, "PRN {prn}");
         }
     }
 
@@ -375,10 +381,7 @@ mod tests {
 
             assert!(
                 ac_0 > ac_k,
-                "autocorr at lag 0 ({}) ≤ lag {} ({})",
-                ac_0,
-                lag,
-                ac_k
+                "autocorr at lag 0 ({ac_0}) ≤ lag {lag} ({ac_k})",
             );
         }
     }
@@ -394,9 +397,7 @@ mod tests {
 
             assert!(
                 ac <= 65,
-                "PRN 5 autocorr at lag {} = {} (should be ≤ 65)",
-                lag,
-                ac
+                "PRN 5 autocorr at lag {lag} = {ac} (should be ≤ 65)",
             );
         }
     }
@@ -411,9 +412,7 @@ mod tests {
         for (lag, &v) in cc.iter().enumerate() {
             assert!(
                 v.abs() <= 65,
-                "PRN1×PRN2 cross-corr at lag {} = {} (should be ≤ 65)",
-                lag,
-                v
+                "PRN1×PRN2 cross-corr at lag {lag} = {v} (should be ≤ 65)",
             );
         }
     }
@@ -431,7 +430,7 @@ mod tests {
         let cache = PrnCodeCache::new();
 
         for prn in 1u8..=32 {
-            assert!(cache.get_gps(prn).is_some(), "missing PRN {}", prn);
+            assert!(cache.get_gps(prn).is_some(), "missing PRN {prn}");
         }
     }
 
@@ -451,7 +450,7 @@ mod tests {
             let cached = cache.get_gps(prn).unwrap();
             let direct = generate_gps_ca(prn);
 
-            assert_eq!(cached, direct.as_slice(), "PRN {} mismatch", prn);
+            assert_eq!(cached, direct.as_slice(), "PRN {prn} mismatch");
         }
     }
 
@@ -462,7 +461,7 @@ mod tests {
         for &n in &[2048usize, 4096, 8192, 1023] {
             let v = cache.resample_gps(1, n).unwrap();
 
-            assert_eq!(v.len(), n, "resample to {} samples", n);
+            assert_eq!(v.len(), n, "resample to {n} samples");
         }
     }
 
@@ -472,7 +471,7 @@ mod tests {
         let v = cache.resample_gps(1, 2048).unwrap();
 
         for &s in &v {
-            assert!(s == 1.0 || s == -1.0, "sample = {}", s);
+            assert!(s == 1.0 || s == -1.0, "sample = {s}");
         }
     }
 
@@ -483,7 +482,7 @@ mod tests {
         let original = cache.get_gps(1).unwrap();
 
         for (i, (&r, &o)) in resampled.iter().zip(original.iter()).enumerate() {
-            assert_eq!(r, o as f32, "chip {}", i);
+            assert_eq!(r, f32::from(o), "chip {i}");
         }
     }
 
@@ -508,10 +507,7 @@ mod tests {
             match count {
                 2 => {}
                 3 => three_count += 1,
-                _ => panic!(
-                    "chip {} appears {} times (expected 2 or 3)",
-                    chip_idx, count
-                ),
+                _ => panic!("chip {chip_idx} appears {count} times (expected 2 or 3)"),
             }
         }
 
@@ -522,7 +518,7 @@ mod tests {
 
         for i in 0..2048 {
             let chip_idx = i * 1023 / 2048;
-            assert_eq!(resampled[i], original[chip_idx] as f32, "sample {}", i);
+            assert_eq!(resampled[i], f32::from(original[chip_idx]), "sample {i}");
         }
     }
 
@@ -552,7 +548,7 @@ mod tests {
         let wrapped = cache.resample_gps_with_phase(1, 2048, 1023.0).unwrap();
 
         for (i, (a, b)) in base.iter().zip(wrapped.iter()).enumerate() {
-            assert_eq!(a, b, "sample {}", i);
+            assert_eq!(a, b, "sample {i}");
         }
     }
 
@@ -568,7 +564,7 @@ mod tests {
         for i in 0..1022 {
             assert_eq!(
                 shifted[i],
-                original[(i + 1) % 1023] as f32,
+                f32::from(original[(i + 1) % 1023]),
                 "chip {}: shifted={} expected={}",
                 i,
                 shifted[i],
@@ -596,7 +592,7 @@ mod tests {
         // 1023 chips / 1.023e6 chips/s = 1.0 ms
         let period_ms = GPS_CODE_LENGTH as f64 / GPS_CHIP_RATE_HZ * 1000.0;
 
-        assert!((period_ms - 1.0).abs() < 1e-9, "period = {} ms", period_ms);
+        assert!((period_ms - 1.0).abs() < 1e-9, "period = {period_ms} ms");
     }
 
     #[test]
