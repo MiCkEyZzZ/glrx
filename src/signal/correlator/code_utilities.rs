@@ -61,8 +61,8 @@ pub fn shift_code(
             let src_floor = src_floor_f as isize;
             let frac = (src_f - src_floor_f) as f32;
 
-            let c0 = if src_floor >= 0 && (src_floor as usize) < n {
-                code[src_floor as usize]
+            let c0 = if src_floor >= 0 && (src_floor.cast_unsigned()) < n {
+                code[src_floor.cast_unsigned()]
             } else if src_floor < 0 {
                 code[0]
             } else {
@@ -71,8 +71,8 @@ pub fn shift_code(
 
             let c1_idx = src_floor + 1;
 
-            let c1 = if c1_idx >= 0 && (c1_idx as usize) < n {
-                code[c1_idx as usize]
+            let c1 = if c1_idx >= 0 && c1_idx.cast_unsigned() < n {
+                code[c1_idx.cast_unsigned()]
             } else if c1_idx < 0 {
                 code[0]
             } else {

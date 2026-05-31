@@ -277,7 +277,7 @@ impl IqSource for SoapySource {
     ) -> RfResult<IqBlock> {
         // TODO: drain ring buffer filled by background streaming thread.
 
-        use crate::rf::RfError;
+        use crate::rf::error::RfError;
 
         Err(RfError::Sdr(
             "SoapySDR hardware streaming not yet implemented; \

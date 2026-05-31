@@ -11,7 +11,7 @@
 //!   peak   = argmax(power)  →  code_phase
 //! ```
 //!
-//! The 2D search surface (Doppler × code_phase) is evaluated for each PRN
+//! The 2D search surface (Doppler × `code_phase`) is evaluated for each PRN
 //! and the strongest peak above a detection threshold is declared acquired.
 
 pub mod correlator;
