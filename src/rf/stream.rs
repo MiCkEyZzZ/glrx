@@ -16,7 +16,8 @@
 //! ```
 //! use glrx::rf::{
 //!     stream::{IqStream, OverflowPolicy},
-//!     IqSource, RfConfig,
+//!     iq_source::IqSource,
+//!     config::RfConfig,
 //! };
 //!
 //! let cfg = RfConfig::default();
