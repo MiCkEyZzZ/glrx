@@ -35,6 +35,11 @@ glrx
 │   ├── ROADMAP.md
 │   └── TRACKING.md
 ├── examples                       # примеры использования ресивера
+│   ├── src
+│   ├── target
+│   ├── Cargo.lock
+│   ├── Cargo.toml
+│   └── README.md
 ├── scripts                        # вспомогательные скрипты (сборка, тесты)
 ├── src
 │   ├── acquisition                # поиск спутников
