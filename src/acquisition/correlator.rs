@@ -55,14 +55,19 @@ use crate::signal::{
 pub struct AcquisitionResult {
     /// PRN number that was searched (1-32 for GPS)
     pub prn: u8,
+
     /// Estimated Doppler frequency shift in Hz
     pub doppler_hz: f64,
+
     /// Code phase of the correlation peak in samples (`0..block_size`)
     pub code_phase_samples: usize,
+
     /// Code phase converted to chips (0.0..1023.0)
     pub code_phase_chips: f64,
+
     /// Peak correlation power (linear, not dB)
     pub peak_power: f32,
+
     /// Ratio of peak power to mean power — higher is better.
     /// Values > 2.5 typically indicate a confident detection
     pub peak_to_mean_ratio: f32,
@@ -76,10 +81,13 @@ pub struct AcquisitionResult {
 pub struct AcquisitionCorrelator {
     /// FFT Engine
     fft: FftEngine,
+
     /// `block_size` = number of IQ samples per code period (1ms)
     block_size: usize,
+
     /// Receiver sample rate in Hz
     sample_rate_hz: f64,
+
     /// Precomputed `FFT(prn_code)` for each PRN
     /// Key: PRN 1-32, Value: complex spectrum of the resampled code.
     prn_ffts: HashMap<u8, Vec<Complex32>>,
