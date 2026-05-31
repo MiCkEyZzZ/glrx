@@ -47,7 +47,9 @@ use crate::rf::{
 /// # Example
 ///
 /// ```
-/// use glrx::rf::{sdr::MockSdrSource, IqSource, RfConfig};
+/// use glrx::rf::{sdr::MockSdrSource};
+/// use glrx::rf::iq_source::{IqSource};
+/// use glrx::rf::config::{RfConfig};
 ///
 /// // 10 kHz tone (simulates a ±10 kHz Doppler offset)
 /// let mut src = MockSdrSource::new(RfConfig::default(), 10_000.0, 0.0);

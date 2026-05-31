@@ -186,7 +186,7 @@ impl Default for PrnCodeCache {
 /// # Algorithm
 ///
 /// 1. Initialise G1 and G2 registers to all-ones.
-/// 2. For each chip: output = G1[10] XOR G2[`tap_a`] XOR G2[`tap_b`]
+/// 2. For each chip: output = G1(10) XOR `G2(tap_a)` XOR `G2(tap_b)`
 /// 3. Advance both registers using their feedback polynomials.
 /// 4. Convert 0 → +1, 1 → −1 (NRZ encoding).
 ///

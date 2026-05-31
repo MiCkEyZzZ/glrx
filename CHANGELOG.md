@@ -9,6 +9,43 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **rf / signal / acquisition foundation (core DSP pipeline bootstrap)**:
+  - реализован полный RF frontend слой с поддержкой file-based IQ источника и SDR
+    abstraction layer
+  - добавлен `IqSource` trait как единая абстракция потоковых и файловых источников
+    IQ данных
+  - реализован `FileSource` с поддержкой int8 / int16 / float32 interleaved IQ форматов
+  - добавлен mock SDR источник для тестирования DSP pipeline без железа
+  - реализован SPSC ring buffer streaming слой с политиками переполнения
+    (DropOldest / BlockProducer / ErrorOnOverflow)
+  - добавлена детекция разрывов потока и метрики стабильности входного сигнала
+
+- **DSP core primitives (signal processing layer)**:
+  - добавлены базовые DSP операции: complex mixing (NCO-based downconversion),
+    FIR filtering, resampling (decimation/interpolation)
+  - интегрирован FFT engine на базе rustfft с кешированием планов и оптимизированными
+    scratch-буферами
+  - реализованы power spectrum utilities, peak detection и cross-correlation через
+    FFT domain
+  - добавлены EPL correlation utilities (early/prompt/late) для GNSS tracking pipeline
+  - реализованы normalization utilities (RMS / power scaling / gain control)
+  - добавлены benchmark suites для всех DSP операций с throughput-метриками
+
+- **PRN / signal generation layer**:
+  - реализована генерация GPS L1 C/A PRN кодов (Gold sequences, 1023 chips)
+  - добавлена таблица PRN 1–32 с корректной конфигурацией регистров сдвига
+  - реализован кэш PRN последовательностей для ускорения acquisition
+  - добавлена поддержка fractional chip shifting для sub-sample correlation
+  - подготовлена архитектура расширения под GLONASS и Galileo PRN (stub layer)
+
+- **streaming & metrics infrastructure**:
+  - добавлен потоковый ring buffer с фиксированными слотами и lock-free consumer
+    interface
+  - реализована обработка backpressure и overflow policies для real-time DSP pipeline
+  - добавлена система метрик входного потока (sample rate estimation, dropped samples,
+    interruptions, signal power estimation)
+  - интегрированы runtime diagnostics для контроля стабильности RF input
+
 - **cargo/config.toml**:
   - добавил `target-dir` и `rustflags` для оптимизации нативного производительности
 

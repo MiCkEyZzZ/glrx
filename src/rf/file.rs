@@ -12,7 +12,10 @@
 //! # Example
 //!
 //! ```no_run
-//! use glrx::rf::{file::FileSource, IqSource, RfConfig, SampleFormat};
+//! use glrx::rf::{file::FileSource};
+//! use glrx::rf::{format::SampleFormat};
+//! use glrx::rf::iq_source::{IqSource};
+//! use glrx::rf::config::{RfConfig};
 //!
 //! let config = RfConfig {
 //!     center_freq_hz: 1_575_420_000.0,
