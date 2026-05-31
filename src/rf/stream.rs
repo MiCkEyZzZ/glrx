@@ -42,7 +42,12 @@ use std::{
 use num_complex::Complex32;
 use parking_lot::Mutex;
 
-use crate::rf::{IqBlock, IqSource, RfConfig, RfError, RfResult, SourceMetrics};
+use crate::rf::{
+    config::RfConfig,
+    error::{RfError, RfResult},
+    iq_source::{IqBlock, IqSource},
+    metrics::SourceMetrics,
+};
 
 /// What to do when the ring buffer is full and a producer tries to write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -413,7 +418,7 @@ impl IqSource for StreamConsumer {
         })
     }
 
-    fn metrics(&self) -> super::SourceMetrics {
+    fn metrics(&self) -> SourceMetrics {
         let total = self.buf.total_read.load(Ordering::Relaxed);
         let dropped = self.buf.dropped.load(Ordering::Relaxed);
         let interruptions = self.buf.interruptions.load(Ordering::Relaxed);
