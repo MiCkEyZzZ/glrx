@@ -129,8 +129,9 @@ impl Window {
 impl FirFilter {
     /// Создаёт FIR-фильтр с заданными коэффициентами.
     ///
-    /// # Паника
-    /// Паника возникает, если `coeffs` пуст.
+    /// # Panics
+    ///
+    /// Panics if `coeffs` is empty.
     #[must_use]
     pub fn new(coeffs: Vec<f32>) -> Self {
         assert!(!coeffs.is_empty(), "coefficient vector must not be empty");
@@ -145,15 +146,10 @@ impl FirFilter {
 
     /// Проектирует низкочастотный FIR-фильтр методом окон.
     ///
-    /// # Аргументы
-    /// - `cutoff_hz` — частота среза (Гц)
-    /// - `sample_rate_hz` — частота дискретизации (Гц)
-    /// - `num_taps` — количество коэффициентов фильтра
-    /// - `window` — оконная функция
+    /// # Panics
     ///
-    /// # Паника
-    /// - если `cutoff_hz` некорректна
-    /// - если `num_taps < 1`
+    /// Panics if `cutoff_hz` is not in `(0, sample_rate_hz / 2)`.
+    /// Panics if `num_taps < 1`.
     #[must_use]
     pub fn low_pass(
         cutoff_hz: f64,

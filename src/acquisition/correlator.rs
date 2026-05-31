@@ -109,6 +109,10 @@ impl AcquisitionCorrelator {
     /// Precompute FFT of the resampled PRN code for a single satellite.
     ///
     /// Call this once per PRN before starting acquisition searches.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `prn` is outside the valid GPS L1 C/A range `1..=32`.
     pub fn precompute_prn(
         &mut self,
         prn: u8,
@@ -144,6 +148,10 @@ impl AcquisitionCorrelator {
     ///
     /// The returned `Vec<f32>` has length `block_size`. Index `k` is the
     /// correlation power at code phase offset `k` samples.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `signal.len() != block_size`.
     pub fn correlate_power(
         &mut self,
         signal: &[Complex32],
@@ -183,6 +191,14 @@ impl AcquisitionCorrelator {
     /// `None` if the PRN was not precomputed.
     /// `Some(AcquisitionResult)` with the Doppler + code phase of the maximum
     /// peak found across the entire grid.
+    ///
+    /// # Panics
+    ///
+    /// Panics if floating-point comparison fails due to NaN values
+    /// encountered during peak search (`partial_cmp(...).unwrap()`).
+    ///
+    /// Panics if internal power computation produces an empty surface
+    /// (should not happen in normal operation).
     pub fn search(
         &mut self,
         signal: &[Complex32],
@@ -403,11 +419,7 @@ mod tests {
             .map(|(i, _)| i)
             .unwrap();
 
-        assert_eq!(
-            peak_idx, delay,
-            "expected peak at {}, got {}",
-            delay, peak_idx
-        );
+        assert_eq!(peak_idx, delay, "expected peak at {delay}, got {peak_idx}");
     }
 
     #[test]
@@ -435,9 +447,7 @@ mod tests {
 
         assert!(
             peak_matched > peak_wrong * 10.0,
-            "matched peak ({}) should be >> wrong PRN peak ({})",
-            peak_matched,
-            peak_wrong
+            "matched peak ({peak_matched}) should be >> wrong PRN peak ({peak_wrong})",
         );
     }
 
@@ -563,9 +573,7 @@ mod tests {
 
             assert!(
                 (mag_a - mag_b).abs() < 1e-5,
-                "amplitude changed: {} vs {}",
-                mag_a,
-                mag_b
+                "amplitude changed: {mag_a} vs {mag_b}",
             );
         }
     }
@@ -573,8 +581,9 @@ mod tests {
     #[test]
     fn block_size_and_sample_rate_accessible() {
         let acq = AcquisitionCorrelator::new(4096, 4_096_000.0);
+        let expected = 4_096_000.0;
 
         assert_eq!(acq.block_size(), 4096);
-        assert_eq!(acq.sample_rate_hz(), 4_096_000.0);
+        assert!((acq.sample_rate_hz() - expected).abs() < 1e-9);
     }
 }

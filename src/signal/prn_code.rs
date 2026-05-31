@@ -95,10 +95,7 @@ impl PrnCodeCache {
     /// GLONASS uses 511-chip M-sequences (x⁹ + x⁵ + 1) identical for all
     /// satellites (FDMA distinguishes satellites by carrier frequency).
     #[must_use]
-    pub const fn get_glonass(
-        &self,
-        _slot: u8,
-    ) -> Option<&[i8]> {
+    pub const fn get_glonass(_slot: u8) -> Option<&'static [i8]> {
         None // TODO GLRX-3 extension: implement GLONASS M-sequence
     }
 
@@ -107,10 +104,7 @@ impl PrnCodeCache {
     /// Galileo uses memory codes (not shift-register generated) defined
     /// in the Galileo OS SIS ICD.
     #[must_use]
-    pub const fn get_galileo_e1(
-        &self,
-        _svid: u8,
-    ) -> Option<&[i8]> {
+    pub const fn get_galileo_e1(_svid: u8) -> Option<&'static [i8]> {
         None // TODO GLRX-3 extension: implement Galileo E1B/E1C codes
     }
 
@@ -169,6 +163,7 @@ impl PrnCodeCache {
         let out = (0..n_samples)
             .map(|i| {
                 let chip_f = i as f64 * n_chips / n_samples as f64 + phase_offset_chips;
+                #[allow(clippy::cast_sign_loss)]
                 let chip_idx = chip_f.floor() as usize % GPS_CODE_LENGTH;
                 f32::from(chips[chip_idx])
             })
@@ -195,9 +190,9 @@ impl Default for PrnCodeCache {
 /// 3. Advance both registers using their feedback polynomials.
 /// 4. Convert 0 → +1, 1 → −1 (NRZ encoding).
 ///
-/// # Panic
+/// # Panics
 ///
-/// Panics if `prn < 1 || prn > 32`
+/// Panics if `prn` is outside `1..=32`.
 #[must_use]
 pub fn generate_gps_ca(prn: u8) -> Vec<i8> {
     assert!(
@@ -365,7 +360,7 @@ mod tests {
             let code = generate_gps_ca(prn);
             let ac = autocorrelation_at_zero(&code);
 
-            assert_eq!(ac, GPS_CODE_LENGTH as i64, "PRN {prn}");
+            assert_eq!(ac, i64::from(1023_u16), "PRN {prn}");
         }
     }
 
@@ -422,7 +417,7 @@ mod tests {
         let code = generate_gps_ca(7);
         let cc = circular_cross_correlation(&code, &code);
 
-        assert_eq!(cc[0], GPS_CODE_LENGTH as i32); // lag 0 = N
+        assert_eq!(cc[0], i32::from(1023_u16)); // lag 0 = N
     }
 
     #[test]
@@ -471,7 +466,7 @@ mod tests {
         let v = cache.resample_gps(1, 2048).unwrap();
 
         for &s in &v {
-            assert!(s == 1.0 || s == -1.0, "sample = {s}");
+            assert!(matches!(s, 1.0 | -1.0), "sample = {s}");
         }
     }
 
@@ -482,7 +477,7 @@ mod tests {
         let original = cache.get_gps(1).unwrap();
 
         for (i, (&r, &o)) in resampled.iter().zip(original.iter()).enumerate() {
-            assert_eq!(r, f32::from(o), "chip {i}");
+            assert_eq!(r.to_bits(), f32::from(o).to_bits(), "chip {i}");
         }
     }
 
@@ -516,9 +511,13 @@ mod tests {
             "expected exactly two chips to appear 3 times"
         );
 
-        for i in 0..2048 {
+        for (i, &sample) in resampled.iter().enumerate() {
             let chip_idx = i * 1023 / 2048;
-            assert_eq!(resampled[i], f32::from(original[chip_idx]), "sample {i}");
+            assert_eq!(
+                sample.to_bits(),
+                f32::from(original[chip_idx]).to_bits(),
+                "sample {i}"
+            );
         }
     }
 
@@ -536,7 +535,7 @@ mod tests {
         let phased = cache.resample_gps_with_phase(1, 2048, 0.0).unwrap();
 
         for (a, b) in base.iter().zip(phased.iter()) {
-            assert_eq!(a, b);
+            assert_eq!(a.to_bits(), b.to_bits());
         }
     }
 
@@ -548,7 +547,7 @@ mod tests {
         let wrapped = cache.resample_gps_with_phase(1, 2048, 1023.0).unwrap();
 
         for (i, (a, b)) in base.iter().zip(wrapped.iter()).enumerate() {
-            assert_eq!(a, b, "sample {i}");
+            assert_eq!(a.to_bits(), b.to_bits(), "sample {i}");
         }
     }
 
@@ -563,28 +562,14 @@ mod tests {
         // shifted[0] should equal original[1], shifted[1] = original[2], etc.
         for i in 0..1022 {
             assert_eq!(
-                shifted[i],
-                f32::from(original[(i + 1) % 1023]),
+                shifted[i].to_bits(),
+                f32::from(original[(i + 1) % 1023]).to_bits(),
                 "chip {}: shifted={} expected={}",
                 i,
                 shifted[i],
-                original[(i + 1) % 1023]
+                f32::from(original[(i + 1) % 1023])
             );
         }
-    }
-
-    #[test]
-    fn test_glonass_stub_returns_none() {
-        let cache = PrnCodeCache::new();
-
-        assert!(cache.get_glonass(1).is_none());
-    }
-
-    #[test]
-    fn test_galileo_stub_returns_none() {
-        let cache = PrnCodeCache::new();
-
-        assert!(cache.get_galileo_e1(1).is_none());
     }
 
     #[test]

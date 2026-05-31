@@ -51,10 +51,17 @@ impl SignalBlock {
         self.samples.len() as f64 / self.sample_rate_hz
     }
 
-    /// Количество сэмплов в одном миллисекунде при текущей частоте.
+    /// Returns number of samples in 1 ms at current sample rate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if internal conversion from `f64` to `usize` fails
+    /// (should never happen for valid positive sample rates).
     #[must_use]
     pub fn samples_per_ms(&self) -> usize {
-        (self.sample_rate_hz / 1000.0) as usize
+        let v = (self.sample_rate_hz / 1_000.0).round();
+
+        usize::try_from(v as i64).unwrap()
     }
 
     /// Возвращает срез сэмплов за один интервал интеграции (1мс).
