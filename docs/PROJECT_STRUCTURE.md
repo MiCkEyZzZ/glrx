@@ -44,6 +44,8 @@ glrx
 ├── src
 │   ├── acquisition                # поиск спутников
 │   │   ├── correlator.rs
+│   │   ├── detector.rs
+│   │   ├── fft_search.rs
 │   │   └── mod.rs
 │   ├── rf                         # IQ потоки / SDR / файлы
 │   │   ├── config.rs
@@ -63,6 +65,7 @@ glrx
 │   │   │   ├── discriminators.rs
 │   │   │   ├── mod.rs
 │   │   │   └── normalisation.rs
+│   │   ├── block.rs
 │   │   ├── fft.rs
 │   │   ├── filter.rs
 │   │   ├── mixer.rs
