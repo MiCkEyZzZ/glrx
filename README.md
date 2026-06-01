@@ -7,6 +7,34 @@
 **GLRX** is a modular GNSS SDR receiver implemented in Rust, focused on
 layered DSP pipelines, satellite tracking, and navigation processing.
 
+```mermaid
+flowchart TD
+
+A[Raw I/O Data] --> B[Signal Separation]
+
+B --> B1[GPS]
+B --> B2[GLONASS]
+B --> B3[Galileo]
+B --> B4[BeiDou]
+
+B1 --> C[Acquisition]
+B2 --> C
+B3 --> C
+B4 --> C
+
+C --> D[Acquisition Results]
+D --> E[MAT Files]
+
+D --> F[Tracking]
+
+F --> G[Tracking Results]
+G --> H[MAT Files]
+
+G --> I[Multi-GNSS Navigation]
+
+I --> J[PVT Solution]
+```
+
 ## Features
 
 - Read IQ data from files or SDR devices.
