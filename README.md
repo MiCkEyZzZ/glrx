@@ -25,12 +25,12 @@ B3 --> C
 B4 --> C
 
 C --> D[Acquisition Results]
-D --> E[MAT Files]
+D --> E[USMET]
 
 D --> F[Tracking]
 
 F --> G[Tracking Results]
-G --> H[MAT Files]
+G --> H[USMET]
 
 G --> I[Multi-GNSS Navigation]
 
