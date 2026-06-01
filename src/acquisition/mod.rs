@@ -15,4 +15,5 @@
 //! and the strongest peak above a detection threshold is declared acquired.
 
 pub mod correlator;
+pub mod detector;
 pub mod fft_search;
