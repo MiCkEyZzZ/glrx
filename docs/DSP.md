@@ -13,25 +13,25 @@ src/signal/
 или системы (GPS/GLONASS/BeiDou) — они работают с `Complex32` и не знают ничего
 о навигационных данных.
 
-## Module Structure
+## Структура модуля
 
 ```text
 src/signal/
 ├── correlator/
 │   ├── base.rs             # correlator_epl() — E/P/L accumulation
 │   ├── code_utilities.rs   # shift_code(), make_epl_replicas()
-│   ├── discriminators.rs   # EplOutput, DLL/PLL discriminators
+│   ├── discriminators.rs   # EplOutput, DLL/PLL дискриминаторы
 │   ├── mod.rs
 │   └── normalisation.rs    # power, normalize, cn0_estimate
-├── block.rs                # SignalBlock (post-processing data container)
-├── fft.rs                  # FftEngine (FFT/IFFT, cross-correlation)
-├── filter.rs              # FIR filter, window functions
+├── block.rs                # SignalBlock (данные после обработки)
+├── fft.rs                  # FftEngine (FFT/IFFT, кросс-корреляция)
+├── filter.rs              # КИХ-фильтр, оконные функции
 ├── mixer.rs               # NCO, Mixer (carrier wipe-off)
 ├── mod.rs
-└── resampler.rs           # Decimator, Interpolator
+└── resampler.rs           # Дециматор, Интерполятор
 ```
 
-## Components
+## Компоненты
 
 ### Mixer / NCO (`mixer.rs`)
 
@@ -48,15 +48,15 @@ NCO (Numerically Controlled Oscillator) генерирует комплексн�
 - `set_frequency()` меняет частоту без фазового скачка
 - `mix_shift()` — stateless вариант для разовых операций
 
-**Typical usage:**
+**Типичное применение:**
 
-| Operation           | freq_hz              |
+| Операция            | freq_hz              |
 | ------------------- | -------------------- |
 | Downconversion (IF) | −IF_freq             |
 | Carrier wipe-off    | −(carrier + doppler) |
-| Test tone           | arbitrary frequency  |
+| Тестовый тон        | arbitrary frequency  |
 
-### FIR Filter (`filter.rs`)
+### КИХ(FIR) фильтр (`filter.rs`) - фильтр конечной импульсной характеристики(finite impulse response)
 
 Direct-form FIR с линией задержки `VecDeque`. Проектирование методом windowed sinc:
 
@@ -78,7 +78,7 @@ h[n] = 2·fc · sinc(2·fc·(n − M/2)) · w[n]
 **Состояние фильтра сохраняется между блоками** — можно вызывать `apply()`
 последовательно для потока данных.
 
-### Resampler (`resampler.rs`)
+### Ресемплер (`resampler.rs`)
 
 Децимация и интерполяция с автоматическим антиалиасинговым LPF (63 taps, Hamming,
 cutoff = 0.45/factor).
@@ -91,9 +91,9 @@ Interpolation:  zero-stuffing → LPF (×factor gain)
 **Важно:** фильтр в `Decimator`/`Interpolator` сохраняет состояние — непрерывная
 потоковая обработка корректна.
 
-### FFT Engine (`fft.rs`)
+### БПФ(FFT) Движок (`fft.rs`) - Быстрое преобразование Фурье(fast Fourier transform)
 
-Кэшированный план rustfft + scratch-буфер. Один экземпляр на размер FFT,
+Кэшированный план rustfft + scratch-буфер. Один экземпляр на размер БПФ,
 переиспользуется многократно.
 
 | Method                    | Description                                               |
@@ -114,7 +114,7 @@ Interpolation:  zero-stuffing → LPF (×factor gain)
   найти пик → code_phase + doppler
 ```
 
-### Correlator (`correlator/`)
+### Коррелятор (`correlator/`)
 
 #### `base.rs` — `correlator_epl()`
 
@@ -176,10 +176,10 @@ SignalBlock {
 }
 ```
 
-## Типичный порядок вызовов (1 мс GPS epoch)
+## Типичный порядок вызовов (период GPS 1 мс)
 
 ```rust
-// 1. Carrier wipe-off
+// 1. Снятие защитного слоя с носителя
 let baseband = carrier_mixer.mix(&iq_block.samples);
 
 // 2. (Опционально) Децимация
@@ -191,7 +191,7 @@ let (early, prompt, late) = make_epl_replicas(&prn_code, half_chip_samples);
 // 4. EPL-корреляция
 let epl = correlator_epl(&decimated, &early, &prompt, &late);
 
-// 5. Дискриминаторы → коррекция tracking loops
+// 5. Дискриминаторы → петли отслеживания коррекций
 let dll_err = epl.dll_nelp();   // → DLL loop filter → code NCO
 let pll_err = epl.pll_dd_atan(); // → PLL loop filter → carrier NCO
 
@@ -200,7 +200,7 @@ prompt_history.push(epl.prompt);
 let cn0 = cn0_estimate(&prompt_history, 0.001); // дБ-Гц
 ```
 
-## Performance (benchmarks)
+## Производительность (бенчмарки)
 
 Все измерения для блока 2048 сэмплов (1 мс при 2.048 Msps):
 

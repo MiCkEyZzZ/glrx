@@ -13,7 +13,7 @@
 //!  6. peak     = argmax(power)  →  code_phase
 //! ```
 //!
-//! The 2-D surface (Doppler * code_phase) is scanned for each PRN.
+//! The 2-D surface (Doppler * `code_phase`) is scanned for each PRN.
 //! A detection is declared when `peak_power / noise+floor > cfar_threshold`.
 
 use std::collections::HashMap;
@@ -38,7 +38,7 @@ pub struct SearchConfig {
     /// Step between Doppler trials in Hz (e.g. 500)
     pub doppler_step_hz: f64,
 
-    /// CFAR detection threshold: peak/noise_floor ratio.
+    /// CFAR detection threshold: `peak/noise_floor` ratio.
     /// Typical values: 2.5 (loose)..4.0 (strict).
     pub cfar_threshold: f32,
 }
@@ -55,7 +55,7 @@ pub struct SearchResult {
     /// Fine Doppler estimate (after sub-bin interpolation) in Hz.
     pub doppler_fine_hz: f64,
 
-    /// Code phase in samples (0..block_size).
+    /// Code phase in samples (`0..block_size`).
     pub code_phase_samples: usize,
 
     /// Code phase in chips (0.0..1023.0).
@@ -97,6 +97,7 @@ pub struct PcpsSearch {
 
 impl SearchConfig {
     /// The Number of Doppler trials in this configuration.
+    #[must_use]
     pub fn num_doppler_bins(&self) -> usize {
         let span = self.doppler_max_hz - self.doppler_min_hz;
 
@@ -114,6 +115,8 @@ impl SearchConfig {
 }
 
 impl SearchSurface {
+    /// Construct a new search surface with the given Doppler trials and block size.
+    #[must_use]
     fn new(
         doppler_trials: Vec<f64>,
         block_size: usize,
@@ -135,7 +138,7 @@ impl SearchSurface {
     }
 
     /// Find the global maximum over the entire 2-D surface.
-    /// Returns (doppler_idx, code_phase_samples, peak_power).
+    /// Returns (doppler_idx, code_phase_samples, `peak_power`).
     fn global_peak(&self) -> (usize, usize, f32) {
         let mut best_d = 0usize;
         let mut best_c = 0usize;
@@ -146,7 +149,7 @@ impl SearchSurface {
                 if p > best_p {
                     best_p = p;
                     best_d = d;
-                    best_c = c
+                    best_c = c;
                 }
             }
         }
@@ -175,6 +178,7 @@ impl PcpsSearch {
     /// - `block_size` — samples per code period (e.g. 2048 at 2.048 Msps).
     /// - `sample_rate_hz` — IQ sample rate in Hz.
     /// - `config` — Doppler grid and CFAR configuration.
+    #[must_use]
     pub fn new(
         block_size: usize,
         sample_rate_hz: f64,
@@ -190,6 +194,7 @@ impl PcpsSearch {
     }
 
     /// Create engine default search config (±10 kHz, 500 Hz step, CFAR=3).
+    #[must_use]
     pub fn with_defaults(
         block_size: usize,
         sample_rate_hz: f64,
@@ -281,7 +286,7 @@ impl PcpsSearch {
         &mut self,
         signal: &[Complex32],
     ) -> Vec<SearchResult> {
-        let prns: Vec<u8> = self.prn_ffts.keys().cloned().collect();
+        let prns: Vec<u8> = self.prn_ffts.keys().copied().collect();
         let mut detected = Vec::new();
         for prn in prns {
             if let Some(result) = self.search_prn(signal, prn) {
@@ -295,22 +300,26 @@ impl PcpsSearch {
     }
 
     /// Sample rate this engine was built for.
-    pub fn sample_rate_hz(&self) -> f64 {
+    #[must_use]
+    pub const fn sample_rate_hz(&self) -> f64 {
         self.sample_rate_hz
     }
 
     /// Block size (samples per code period).
-    pub fn block_size(&self) -> usize {
+    #[must_use]
+    pub const fn block_size(&self) -> usize {
         self.block_size
     }
 
     /// The Number of per-computed PRNs.
+    #[must_use]
     pub fn precomputed_count(&self) -> usize {
         self.prn_ffts.len()
     }
 
     /// Current search configuration.
-    pub fn config(&self) -> &SearchConfig {
+    #[must_use]
+    pub const fn config(&self) -> &SearchConfig {
         &self.config
     }
 
@@ -363,7 +372,7 @@ impl PcpsSearch {
 
         let delta = (y_p1 - y_m1) / (2.0 * denom);
 
-        surface.doppler_trials[best_d] + delta as f64 * self.config.doppler_step_hz
+        surface.doppler_trials[best_d] + f64::from(delta) * self.config.doppler_step_hz
     }
 }
 

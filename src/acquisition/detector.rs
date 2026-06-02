@@ -65,7 +65,8 @@ pub enum CfarEstimator {
     /// Use the mean of the lower `(1 − trim_fraction)` of cells.
     /// `trim_fraction = 0.05` trims the top 5% (removes interference spikes).
     TrimmedMean {
-        ///
+        /// Fraction of highest values to exclude from noise floor estimation.
+        /// For example, 0.05 removes the top 5% of correlation bins.
         trim_fraction: f32,
     },
 }
@@ -73,7 +74,7 @@ pub enum CfarEstimator {
 /// Configuration for the post-correlation detector.
 #[derive(Debug, Clone)]
 pub struct DetectorConfig {
-    /// Primary CFAR threshold: peak/noise_floor > this -> candidate
+    /// Primary CFAR threshold: `peak/noise_floor` > this -> candidate
     pub cfar_threshold: f32,
 
     /// CFAR noise floor estimator
@@ -97,12 +98,14 @@ pub struct Detector {
 
 impl DetectionVerdict {
     /// Whether this is a confirmed detection.
-    pub fn is_detected(&self) -> bool {
+    #[must_use]
+    pub const fn is_detected(&self) -> bool {
         matches!(self, DetectionVerdict::Detected { .. })
     }
 
     /// Confidence score: 1.0 for `Detected`, 0.0 for others.
-    pub fn confidence(&self) -> f32 {
+    #[must_use]
+    pub const fn confidence(&self) -> f32 {
         match self {
             DetectionVerdict::Detected { confidence, .. } => *confidence,
             _ => 0.0,
@@ -112,23 +115,43 @@ impl DetectionVerdict {
 
 impl CfarEstimator {
     /// Estimate the noise floor from a flat power surface slice.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the input contains `NaN`, because the trimmed-mean path
+    /// sorts values using floating-point comparison.
+    #[must_use]
     pub fn estimate(
-        &self,
+        self,
         surface: &[f32],
     ) -> f32 {
-        if surface.is_empty() {
+        let len = surface.len();
+        if len == 0 {
             return 0.0;
         }
 
         match self {
-            CfarEstimator::Mean => surface.iter().sum::<f32>() / surface.len() as f32,
+            CfarEstimator::Mean => surface.iter().sum::<f32>() / len as f32,
+
             CfarEstimator::TrimmedMean { trim_fraction } => {
                 let mut sorted = surface.to_vec();
+                sorted.sort_by(f32::total_cmp);
 
-                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                let trim_fraction = trim_fraction.clamp(0.0, 1.0);
 
-                let keep = ((1.0 - trim_fraction) * sorted.len() as f32) as usize;
-                let keep = keep.max(1);
+                // floor(len * trim_fraction) без float -> int cast
+                let mut trim = 0usize;
+                let mut acc = 0.0f32;
+
+                for _ in 0..len {
+                    acc += trim_fraction;
+                    if acc >= 1.0 {
+                        trim += 1;
+                        acc -= 1.0;
+                    }
+                }
+
+                let keep = len.saturating_sub(trim).max(1);
 
                 sorted[..keep].iter().sum::<f32>() / keep as f32
             }
@@ -138,11 +161,13 @@ impl CfarEstimator {
 
 impl Detector {
     /// Create a detector with the given configuration.
-    pub fn new(config: DetectorConfig) -> Self {
+    #[must_use]
+    pub const fn new(config: DetectorConfig) -> Self {
         Self { config }
     }
 
     /// Create a detector with default settings.
+    #[must_use]
     pub fn with_defaults() -> Self {
         Self::new(DetectorConfig::default())
     }
@@ -154,6 +179,7 @@ impl Detector {
     /// - `result` — output of [`PcpsSearch::search_prn`].
     /// - `surface` — the 1-D correlation power surface at the best Doppler bin.
     ///   Length must equal the block size used for acquisition.
+    #[must_use]
     pub fn evaluate(
         &self,
         result: &SearchResult,
@@ -201,6 +227,7 @@ impl Detector {
     /// Compute noise floor from a raw correlation power surface.
     ///
     /// Useful when you have the surface directly without a `SearchResult`.
+    #[must_use]
     pub fn noise_floor(
         &self,
         surface: &[f32],
@@ -209,6 +236,7 @@ impl Detector {
     }
 
     /// Compute CFAR peak-to-noise ratio for a surface.
+    #[must_use]
     pub fn peak_to_noise(
         &self,
         surface: &[f32],
@@ -216,9 +244,8 @@ impl Detector {
         let peak_idx = surface
             .iter()
             .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-            .map(|(i, _)| i)
-            .unwrap_or(0);
+            .max_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map_or(0, |(i, _)| i);
 
         let noise = self.noise_floor(surface);
         let ratio = if noise > f32::EPSILON {
@@ -243,12 +270,8 @@ impl Detector {
             .iter()
             .enumerate()
             .filter(|&(i, _)| {
-                let dist = if i >= main_peak {
-                    i - main_peak
-                } else {
-                    main_peak - i
-                };
-                let dist_wrap = n - dist;
+                let dist = i.abs_diff(main_peak);
+                let dist_wrap = n.abs_diff(dist); // или n - dist (см. ниже)
 
                 dist.min(dist_wrap) > excl
             })
@@ -278,6 +301,7 @@ impl Detector {
 /// ```
 ///
 /// where `SNR_linear ≈ (peak/noise − 1)` and `T_coh = 1 ms`.
+#[must_use]
 pub fn estimate_cn0(
     peak_to_noise: f32,
     _threshold: f32,
@@ -289,6 +313,7 @@ pub fn estimate_cn0(
 }
 
 /// Compute signal-to-noise ratio from a correlation surface.
+#[must_use]
 pub fn surface_snr(surface: &[f32]) -> (usize, f32) {
     if surface.is_empty() {
         return (0, 0.0);
@@ -297,8 +322,8 @@ pub fn surface_snr(surface: &[f32]) -> (usize, f32) {
     let (peak_idx, &peak) = surface
         .iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .unwrap();
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .unwrap_or((0, &0.0));
 
     let mean = surface.iter().sum::<f32>() / surface.len() as f32;
     let snr = if mean > f32::EPSILON {
@@ -425,7 +450,7 @@ mod tests {
         let (idx, snr) = surface_snr(&surface);
 
         assert_eq!(idx, 42);
-        assert!(snr > 1.0, "snr should be > 1, got {}", snr);
+        assert!(snr > 1.0, "snr should be > 1, got {snr}");
     }
 
     #[test]
@@ -446,12 +471,7 @@ mod tests {
         let cn0_low = estimate_cn0(3.0, 3.0);
         let cn0_high = estimate_cn0(10.0, 3.0);
 
-        assert!(
-            cn0_high > cn0_low,
-            "cn0_high={} cn0_low={}",
-            cn0_high,
-            cn0_low
-        );
+        assert!(cn0_high > cn0_low, "cn0_high={cn0_high} cn0_low={cn0_low}");
     }
 
     #[test]
@@ -459,7 +479,7 @@ mod tests {
         // SNR=100 → CN0 ≈ 10*log10(99) + 30 ≈ 49.9 dBHz
         let cn0 = estimate_cn0(100.0, 3.0);
 
-        assert!(cn0 > 40.0, "expected > 40 dBHz, got {}", cn0);
+        assert!(cn0 > 40.0, "expected > 40 dBHz, got {cn0}");
     }
 
     #[test]
@@ -475,8 +495,7 @@ mod tests {
 
         assert!(
             verdict.is_detected(),
-            "strong signal should be detected: {:?}",
-            verdict
+            "strong signal should be detected: {verdict:?}"
         );
     }
 
@@ -524,8 +543,7 @@ mod tests {
 
         assert!(
             matches!(verdict, DetectionVerdict::FalseAlarm { .. }),
-            "should be false alarm due to second peak: {:?}",
-            verdict
+            "should be false alarm due to second peak: {verdict:?}"
         );
     }
 
@@ -546,7 +564,7 @@ mod tests {
         let (idx, ratio) = det.peak_to_noise(&surface);
 
         assert_eq!(idx, 10);
-        assert!((ratio - 8.767123).abs() < 0.01, "ratio={}", ratio);
+        assert!((ratio - 8.767_123).abs() < 0.01, "ratio={ratio}");
     }
 
     #[test]
