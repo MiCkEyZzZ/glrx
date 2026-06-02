@@ -1,4 +1,4 @@
-# Reception Pipeline - GLRX Pipeline
+# Конвейер приёма — GLRX Pipeline
 
 Module:
 
@@ -6,7 +6,7 @@ Module:
 src/pipeline/
 ```
 
-## System Overview
+## Общая схема
 
 GGLRX processes signals through a multi-stage pipeline.
 
@@ -59,7 +59,7 @@ GGLRX processes signals through a multi-stage pipeline.
 └──────────────┘
 ```
 
-## Data at Each Stage
+## Данные на каждом этапе
 
 ### IqBlock (RF -> Signal)
 
@@ -108,27 +108,27 @@ PositionSolution {
 }
 ```
 
-## Receiver State Machine
+## Состояния приёмника
 
 ```text
 COLD_START
     │
-    ▼ (IQ stream available)
+    ▼ (IQ данные доступны)
 ACQUIRING
     │
-    ▼ (≥ 4 satellites acquired)
+    ▼ (найдено ≥ 4 спутников)
 TRACKING
     │
-    ▼ (ephemeris decoded)
+    ▼ (декодированы эфемериды)
 NAVIGATING
     │
     ▼ (≥ 4 observables)
 FIXED (position solution available)
 ```
 
-## Timing Budget (GPS L1 C/A, 2.048 Msps)
+## Временной бюджет (GPS L1 C/A, 2.048 Msps)
 
-| Stage               | Time Unit           | Typical Latency       |
+| Этап                | Единица времени     | Типичная задержка     |
 | ------------------- | ------------------- | --------------------- |
 | IQ capture          | 1 ms (2048 samples) | real-time             |
 | Signal processing   | 1 ms                | < 1 ms                |

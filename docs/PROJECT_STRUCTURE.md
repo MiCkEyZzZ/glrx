@@ -1,4 +1,4 @@
-# Project structure
+# Структура проекта
 
 ```text
 glrx
