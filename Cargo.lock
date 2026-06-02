@@ -236,6 +236,10 @@ dependencies = [
 [[package]]
 name = "examples"
 version = "0.1.0"
+dependencies = [
+ "glrx",
+ "num-complex",
+]
 
 [[package]]
 name = "fastrand"
