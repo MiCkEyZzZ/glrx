@@ -5,6 +5,32 @@ All notable changes to **GLRX** are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 0000-00-00
+
+### Added
+
+- **acquisition (FFT-based signal search)**:
+  - реализован PCPS (Parallel Code Phase Search) алгоритм на основе FFT
+  - добавлена частотная сетка Doppler search: ±10 kHz с шагом 500 Hz
+  - реализован CFAR-based detector для адаптивного порога обнаружения пиков
+  - добавлена структура результата `AcquisitionResult { prn, doppler_hz, code_phase }`
+  - реализован полный поиск по всем 32 GPS PRN за один проход
+  - добавлена процедура fine frequency estimation после грубого Doppler поиска
+  - добавлены benchmark-метрики времени поиска (single PRN / full 32 PRN scan)
+
+- **acquisition module integration**:
+  - добавлены модули `fft_search.rs`, `detector.rs`, `mod.rs`
+  - интегрирован FFT-based cross-correlation pipeline в acquisition layer
+  - добавлена обработка результатов корреляции через power surface analysis
+  - подготовлена архитектура расширения под multi-constellation acquisition
+
+### Changed
+
+- **docs**:
+  - добавлены небольшие правки по коду в acquisition модуль вызванные Clippy линтером
+  - улучшена документацию в `DSP.md`, `NAVIGATION.md`, `PIPELINE.md`, `TRACKING.md`
+  - обновлён README.md файл добавлена схема архитектуры
+
 ## [0.1.0] - 2026-05-31
 
 ### Added
