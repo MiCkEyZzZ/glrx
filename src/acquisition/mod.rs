@@ -17,3 +17,4 @@
 pub mod correlator;
 pub mod detector;
 pub mod fft_search;
+pub mod verifier;
