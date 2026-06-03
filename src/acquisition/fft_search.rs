@@ -44,7 +44,7 @@ pub struct SearchConfig {
 }
 
 /// Coarse PCPS acquisition result for one PRN.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {
     /// PRN number (GPS: 1-32)
     pub prn: u8,

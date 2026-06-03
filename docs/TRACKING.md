@@ -1,6 +1,6 @@
-# Tracking Layer — Слежение за спутниками
+# Слой отслеживания
 
-Module:
+Модуль:
 
 ```text
 src/tracking/

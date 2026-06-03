@@ -1,6 +1,6 @@
-# Конвейер приёма — GLRX Pipeline
+# Конвейер приёма
 
-Module:
+Модуль:
 
 ```text
 src/pipeline/
@@ -8,7 +8,7 @@ src/pipeline/
 
 ## Общая схема
 
-GGLRX processes signals through a multi-stage pipeline.
+GLRX обрабатывает сигналы через многоступенчатый конвейер.
 
 ```text
 ┌─────────────┐
@@ -65,9 +65,9 @@ GGLRX processes signals through a multi-stage pipeline.
 
 ```rust
 IqBlock {
-    samples: Vec<Complex32>,  // normalized IQ samples in range ±1.0
+    samples: Vec<Complex32>,  // нормализованные IQ-сэмплы в диапазоне ±1.0
     config: Arc<RfConfig>,    // fs, center_freq, format
-    start_sample: u64,        // monotonic sample counter
+    start_sample: u64,        // монотонный счетчик сэмплов
 }
 ```
 
@@ -76,9 +76,9 @@ IqBlock {
 ```rust
 AcquisitionResult {
     prn: u8,           // GPS PRN 1–32
-    doppler_hz: f64,   // estimated Doppler shift
-    code_phase: usize, // code phase in samples
-    cn0_db: f32,       // estimated C/N₀
+    doppler_hz: f64,   // расчетный доплеровский сдвиг
+    code_phase: usize, // фаза кода в отсчетах
+    cn0_db: f32,       // расчетное оценка C/N₀
 }
 ```
 
@@ -87,10 +87,10 @@ AcquisitionResult {
 ```rust
 Observable {
     prn: u8,
-    pseudorange: f64,   // meters (corrected)
-    doppler: f64,       // Hz
-    cn0: f32,           // dB-Hz
-    timestamp: f64,     // GPS time (seconds)
+    pseudorange: f64,   // метры (скорректированные)
+    doppler: f64,       // Гц
+    cn0: f32,           // дБ-Гц
+    timestamp: f64,     // Время GPS (секунды)
 }
 ```
 
@@ -98,10 +98,10 @@ Observable {
 
 ```rust
 PositionSolution {
-    lat: f64,           // degrees
+    lat: f64,           // градусы
     lon: f64,
-    alt: f64,           // meters above ellipsoid
-    clock_bias: f64,    // receiver clock offset (meters)
+    alt: f64,           // метры над эллипсоидом
+    clock_bias: f64,    // смещение тактовой частоты приемника (метры)
     hdop: f32,
     vdop: f32,
     num_satellites: u8,

@@ -145,6 +145,7 @@ impl CfarEstimator {
 
                 for _ in 0..len {
                     acc += trim_fraction;
+
                     if acc >= 1.0 {
                         trim += 1;
                         acc -= 1.0;
