@@ -305,6 +305,7 @@ dependencies = [
  "log",
  "num-complex",
  "parking_lot",
+ "rayon",
  "rustfft",
  "tempfile",
 ]

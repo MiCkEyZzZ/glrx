@@ -1,6 +1,6 @@
-# Signal Processing Layer — DSP
+# Слой обработки сигналов
 
-Module:
+Модуль:
 
 ```text
 src/signal/
@@ -68,12 +68,12 @@ h[n] = 2·fc · sinc(2·fc·(n − M/2)) · w[n]
 
 **Оконные функции:**
 
-| Window      | Stopband | Transition band |
+| Окно        | Stopband | Transition band |
 | ----------- | -------- | --------------- |
-| Rectangular | −21 dB   | узкая           |
-| Hamming     | −43 dB   | средняя         |
-| Hann        | −31 dB   | средняя         |
-| Blackman    | −74 dB   | широкая         |
+| Rectangular | −21 дБ   | узкая           |
+| Hamming     | −43 дБ   | средняя         |
+| Hann        | −31 дБ   | средняя         |
+| Blackman    | −74 дБ   | широкая         |
 
 **Состояние фильтра сохраняется между блоками** — можно вызывать `apply()`
 последовательно для потока данных.
@@ -96,7 +96,7 @@ Interpolation:  zero-stuffing → LPF (×factor gain)
 Кэшированный план rustfft + scratch-буфер. Один экземпляр на размер БПФ,
 переиспользуется многократно.
 
-| Method                    | Description                                               |
+| Метод                     | Описание                                                  |
 | ------------------------- | --------------------------------------------------------- |
 | `fft()` / `ifft()`        | Forward / inverse DFT                                     |
 | `power_spectrum()`        | `\|X[k]\|^2` for each frequency bin                       |
@@ -128,12 +128,12 @@ L += s[n] × code_late[n]
 
 #### `discriminators.rs` — `EplOutput`
 
-| Discriminator | Formula             | Range      | Use case   |
-| ------------- | ------------------- | ---------- | ---------- |
-| dll_nelp      | (E² - L²)/(E² + L²) | [-1,1]     | main DLL   |
-| dll_ele       | E - L               | variable   | simple DLL |
-| pll_atan2     | atan2(Q, I)         | (-π,π]     | robust PLL |
-| pll_dd_atan   | atan(Q/I)           | (-π/2,π/2] | BPSK PLL   |
+| Дискриминатор | Формула             | Диапазон   | Вариант использования |
+| ------------- | ------------------- | ---------- | --------------------- |
+| dll_nelp      | (E² - L²)/(E² + L²) | [-1,1]     | main DLL              |
+| dll_ele       | E - L               | variable   | simple DLL            |
+| pll_atan2     | atan2(Q, I)         | (-π,π]     | robust PLL            |
+| pll_dd_atan   | atan(Q/I)           | (-π/2,π/2] | BPSK PLL              |
 
 #### `code_utilities.rs` — `shift_code()`
 
@@ -150,7 +150,7 @@ offset = 0 → без изменений (Prompt-реплика)
 
 #### `normalisation.rs`
 
-| Function               | Description                                      |
+| Функция                | Описание                                         |
 | ---------------------- | ------------------------------------------------ |
 | `compute_power()`      | (1/N) \* Σ abs(s[n])^2                           |
 | `compute_rms()`        | sqrt(compute_power())                            |
@@ -163,16 +163,16 @@ offset = 0 → без изменений (Prompt-реплика)
 
 ### SignalBlock (`block.rs`)
 
-A data block **after signal processing** (downconversion + filtering), passed
-to acquisition and tracking stages.
+Блок данных **после обработки сигнала** (понижение частоты + фильтрация), передаваемый
+на этапы сбора и отслеживания.
 
 ```rust
 SignalBlock {
-    samples: Vec<Complex32>,   // baseband IQ samples
-    sample_rate_hz: f64,       // may differ from original (decimation/interpolation)
+    samples: Vec<Complex32>,   // IQ-сэмплы основной полосы частот
+    sample_rate_hz: f64,       // может отличаться от оригинала (decimation/interpolation)
     center_freq_hz: f64,       // RF carrier frequency before downconversion
-    start_sample: u64,         // position in original IQ stream
-    applied_doppler_hz: f64,   // Doppler shift applied during mixing
+    start_sample: u64,         // позиция в исходном IQ-потоке
+    applied_doppler_hz: f64,   // Доплеровский сдвиг, применяемый во время смешивания
 }
 ```
 
@@ -204,13 +204,13 @@ let cn0 = cn0_estimate(&prompt_history, 0.001); // дБ-Гц
 
 Все измерения для блока 2048 сэмплов (1 мс при 2.048 Msps):
 
-| Operation                    | Estimated cost |
-| ---------------------------- | -------------- |
-| `Mixer::mix` (2048)          | ~5–10 µs       |
-| `FirFilter` 63 taps (2048)   | ~15–30 µs      |
-| `Decimator ×4` (2048)        | ~20–40 µs      |
-| `FFT` 2048                   | ~50–100 µs     |
-| `cross_correlate_power` 2048 | ~150–300 µs    |
-| `correlator_epl` (2048)      | ~2–5 µs        |
+| Операция                     | Ориентировочная стоимость |
+| ---------------------------- | ------------------------- |
+| `Mixer::mix` (2048)          | ~5–10 µs                  |
+| `FirFilter` 63 taps (2048)   | ~15–30 µs                 |
+| `Decimator ×4` (2048)        | ~20–40 µs                 |
+| `FFT` 2048                   | ~50–100 µs                |
+| `cross_correlate_power` 2048 | ~150–300 µs               |
+| `correlator_epl` (2048)      | ~2–5 µs                   |
 
 Запустить бенчмарки: `cargo bench --bench dsp_benchmark`

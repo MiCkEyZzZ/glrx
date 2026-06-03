@@ -47,6 +47,9 @@ glrx
 │   │   ├── detector.rs
 │   │   ├── fft_search.rs
 │   │   └── mod.rs
+│   ├── pipeline                   # high-level pipeline
+│   │   ├── mod.rs
+│   │   └── receiver.rs            # соединяет acquisition → tracking → solver
 │   ├── rf                         # IQ потоки / SDR / файлы
 │   │   ├── config.rs
 │   │   ├── error.rs
