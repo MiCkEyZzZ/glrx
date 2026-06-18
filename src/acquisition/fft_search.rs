@@ -96,12 +96,21 @@ pub struct PcpsSearch {
 }
 
 impl SearchConfig {
-    /// The Number of Doppler trials in this configuration.
+    /// The number of Doppler trials in this configuration.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - `doppler_step_hz <= 0.0`
+    /// - `doppler_max_hz < doppler_min_hz`
     #[must_use]
     pub fn num_doppler_bins(&self) -> usize {
-        let span = self.doppler_max_hz - self.doppler_min_hz;
+        assert!(self.doppler_step_hz > 0.0);
+        assert!(self.doppler_max_hz >= self.doppler_min_hz);
 
-        (span / self.doppler_step_hz).round() as usize + 1
+        let bins = ((self.doppler_max_hz - self.doppler_min_hz) / self.doppler_step_hz).round();
+
+        usize::try_from(bins as i64).expect("invalid Doppler search configuration") + 1
     }
 
     /// Iterator over all Doppler trial frequencies.
@@ -208,9 +217,8 @@ impl PcpsSearch {
         prn: u8,
         cache: &PrnCodeCache,
     ) {
-        let resampled = match cache.resample_gps(prn, self.block_size) {
-            Some(v) => v,
-            None => return,
+        let Some(resampled) = cache.resample_gps(prn, self.block_size) else {
+            return;
         };
         let mut code: Vec<Complex32> = resampled
             .into_iter()
@@ -234,6 +242,10 @@ impl PcpsSearch {
     /// Run PCPS acquisition for a single PRN.
     ///
     /// Returns `None` if the PRN has not been pre-computed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `signal.len() != self.block_size`.
     pub fn search_prn(
         &mut self,
         signal: &[Complex32],
@@ -295,7 +307,9 @@ impl PcpsSearch {
                 }
             }
         }
-        detected.sort_by(|a, b| b.peak_to_noise.partial_cmp(&a.peak_to_noise).unwrap());
+
+        detected.sort_by(|a, b| b.peak_to_noise.total_cmp(&a.peak_to_noise));
+
         detected
     }
 
@@ -329,7 +343,7 @@ impl PcpsSearch {
         signal: &[Complex32],
         prn: u8,
     ) -> Option<Vec<f32>> {
-        let code_fft = self.prn_ffts.get(&prn)?.to_vec();
+        let code_fft = self.prn_ffts.get(&prn)?.clone();
         let mut sig = signal.to_vec();
 
         self.fft.fft_inplace(&mut sig);
@@ -576,7 +590,6 @@ mod tests {
             .map(|c| Complex32::new(c, 0.0))
             .collect();
         let signal = apply_doppler_shift(&base, true_doppler, FS);
-
         let res = eng.search_prn(&signal, 3).unwrap();
 
         assert!(
@@ -817,7 +830,7 @@ mod tests {
         let eng = PcpsSearch::with_defaults(4096, 4_096_000.0);
 
         assert_eq!(eng.block_size(), 4096);
-        assert_eq!(eng.sample_rate_hz(), 4_096_000.0);
+        assert!((eng.sample_rate_hz() - 4_096_000.0).abs() < f64::EPSILON);
         assert_eq!(eng.precomputed_count(), 0);
     }
 }
