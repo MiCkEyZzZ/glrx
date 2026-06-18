@@ -399,6 +399,10 @@ impl AcquisitionVerifier {
     ///
     /// Второй проход строится с Doppler-диапазоном, динамически
     /// центрированным на результате первого прохода.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `signal.len() != self.block_size`.
     pub fn verify_prn(
         &mut self,
         signal: &[Complex32],
@@ -449,13 +453,15 @@ impl AcquisitionVerifier {
 
         // Недостижимо — последняя итерация всегда возвращает.
         // Rustc требует exhaustive return.
-        let v = VerificationVerdict::Rejected {
+        let verdict = VerificationVerdict::Rejected {
             prn,
             peak_to_noise: None,
             elapsed: t0.elapsed(),
         };
-        self.stats.record(&v, retried);
-        v
+
+        self.stats.record(&verdict, retried);
+
+        verdict
     }
 
     /// Верифицирует все PRN 1-32, возвращает подтверждённые спутники
@@ -466,7 +472,9 @@ impl AcquisitionVerifier {
         &mut self,
         signal: &[Complex32],
     ) -> Vec<AcquisitionResult> {
-        assert_eq!(signal.len(), self.block_size);
+        if signal.len() != self.block_size {
+            return Vec::new();
+        }
 
         let mut results = Vec::new();
 
@@ -476,7 +484,7 @@ impl AcquisitionVerifier {
             }
         }
 
-        results.sort_by(|a, b| b.cn0_db_hz.partial_cmp(&a.cn0_db_hz).unwrap());
+        results.sort_by(|a, b| b.cn0_db_hz.total_cmp(&a.cn0_db_hz));
 
         results
     }
@@ -499,15 +507,12 @@ impl AcquisitionVerifier {
         t0: Instant,
     ) -> VerificationVerdict {
         // ── Первый проход: широкий поиск ──────────────────────────────────────
-        let first = match self.engine_first.search_prn(signal, prn) {
-            Some(r) => r,
-            None => {
-                return VerificationVerdict::Rejected {
-                    prn,
-                    peak_to_noise: None,
-                    elapsed: t0.elapsed(),
-                };
-            }
+        let Some(first) = self.engine_first.search_prn(signal, prn) else {
+            return VerificationVerdict::Rejected {
+                prn,
+                peak_to_noise: None,
+                elapsed: t0.elapsed(),
+            };
         };
 
         if !first.detected {
@@ -541,15 +546,12 @@ impl AcquisitionVerifier {
             engine2.search_prn(signal, prn)
         };
 
-        let second = match second {
-            Some(r) => r,
-            None => {
-                return VerificationVerdict::Marginal {
-                    result: first,
-                    reason: MarginalReason::NoResult,
-                    elapsed: t0.elapsed(),
-                };
-            }
+        let Some(second) = second else {
+            return VerificationVerdict::Marginal {
+                result: first,
+                reason: MarginalReason::NoResult,
+                elapsed: t0.elapsed(),
+            };
         };
 
         // ── Проверка согласованности ──────────────────────────────────────────
@@ -641,7 +643,8 @@ pub fn parallel_search(
         .filter(|r| r.detected)
         .collect();
 
-    results.sort_by(|a, b| b.peak_to_noise.partial_cmp(&a.peak_to_noise).unwrap());
+    results.sort_by(|a, b| b.peak_to_noise.total_cmp(&a.peak_to_noise));
+
     results
 }
 
@@ -659,16 +662,21 @@ pub fn parallel_search(
     cache: &PrnCodeCache,
 ) -> Vec<SearchResult> {
     let mut results = Vec::new();
+
     for &prn in prns {
         let mut engine = PcpsSearch::new(block_size, sample_rate_hz, config.clone());
+
         engine.precompute_prn(prn, cache);
+
         if let Some(r) = engine.search_prn(signal, prn) {
             if r.detected {
                 results.push(r);
             }
         }
     }
-    results.sort_by(|a, b| b.peak_to_noise.partial_cmp(&a.peak_to_noise).unwrap());
+
+    results.sort_by(|a, b| b.peak_to_noise.total_cmp(&a.peak_to_noise));
+
     results
 }
 

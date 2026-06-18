@@ -177,7 +177,7 @@ impl Detector {
     ///
     /// # Arguments
     ///
-    /// - `result` — output of [`PcpsSearch::search_prn`].
+    /// - `result` — output of `PcpsSearch::search_prn`.
     /// - `surface` — the 1-D correlation power surface at the best Doppler bin.
     ///   Length must equal the block size used for acquisition.
     #[must_use]
@@ -389,7 +389,7 @@ mod tests {
         };
 
         assert!(!v.is_detected());
-        assert_eq!(v.confidence(), 0.0);
+        assert!((v.confidence() - 0.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_mean_estimator_empty() {
-        assert_eq!(CfarEstimator::Mean.estimate(&[]), 0.0);
+        assert!((CfarEstimator::Mean.estimate(&[]) - 0.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -439,7 +439,7 @@ mod tests {
     fn trimmed_mean_empty() {
         let est = CfarEstimator::TrimmedMean { trim_fraction: 0.1 };
 
-        assert_eq!(est.estimate(&[]), 0.0);
+        assert!((est.estimate(&[]) - 0.0).abs() < f32::EPSILON);
     }
 
     #[test]
