@@ -29,13 +29,13 @@ use crate::signal::{
 /// Configuration for the acquisition frequency/Doppler search grid.
 #[derive(Debug, Clone)]
 pub struct SearchConfig {
-    /// Minimum Doppler to search in Hz (e.g. -10_000)
+    /// Minimum Doppler to search in Hz (e.g. -`10_000`)
     pub doppler_min_hz: f64,
 
-    /// Maximum Doppler to search in Hz (e.g. +10_000)
+    /// Maximum Doppler to search in Hz (e.g. +`10_000`)
     pub doppler_max_hz: f64,
 
-    /// Step between Doppler trials in Hz (e.g. 500)
+    /// Step between Doppler trials in Hz (e.g. `500`)
     pub doppler_step_hz: f64,
 
     /// CFAR detection threshold: `peak/noise_floor` ratio.
@@ -138,7 +138,7 @@ impl SearchSurface {
     }
 
     /// Find the global maximum over the entire 2-D surface.
-    /// Returns (doppler_idx, code_phase_samples, `peak_power`).
+    /// Returns (`doppler_idx`, `code_phase_samples`, `peak_power`).
     fn global_peak(&self) -> (usize, usize, f32) {
         let mut best_d = 0usize;
         let mut best_c = 0usize;
