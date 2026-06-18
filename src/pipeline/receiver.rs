@@ -273,7 +273,7 @@ impl Receiver {
 
     /// Текущий номер эпохи.
     #[must_use]
-    pub fn epoch(&self) -> u64 {
+    pub const fn epoch(&self) -> u64 {
         self.epoch
     }
 
@@ -666,7 +666,7 @@ mod tests {
 
         // Число захваченных не должно удвоиться
         assert!(
-            tracked_after_2 <= tracked_after_1 + 0,
+            tracked_after_2 <= tracked_after_1,
             "PRN 1 should not be re-acquired: {tracked_after_1} → {tracked_after_2}"
         );
     }
