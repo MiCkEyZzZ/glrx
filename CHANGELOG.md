@@ -9,6 +9,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **pipeline**
+  - Добавлена базовая реализация `receiver.rs`
+
 - **acquisition (FFT-based signal search)**:
   - реализован PCPS (Parallel Code Phase Search) алгоритм на основе FFT
   - добавлена частотная сетка Doppler search: ±10 kHz с шагом 500 Hz

@@ -46,7 +46,8 @@ glrx
 │   │   ├── correlator.rs
 │   │   ├── detector.rs
 │   │   ├── fft_search.rs
-│   │   └── mod.rs
+│   │   ├── mod.rs
+│   │   └── verifier.rs
 │   ├── pipeline                   # high-level pipeline
 │   │   ├── mod.rs
 │   │   └── receiver.rs            # соединяет acquisition → tracking → solver
