@@ -9,6 +9,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **acquisition**
+  - в `verifier.rs` в ф-ях `precompute_prn()` и `precompute_all()` убрал лишниее
+    клонирование
+  - в ф-ии `single_verify()` исправил сравнение при получении `doppler_ok` с `doppler_fine_hz`
+    на `doppler_coarse_hz`. Потому что второй проход строится вокруг: `doppler_coarse_hz`,
+    а не `doppler_fine_hz`. Именно coarse является центром narrow-search.
+
 - **pipeline**
   - Добавлена базовая реализация `receiver.rs`
 

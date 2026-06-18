@@ -387,12 +387,12 @@ impl AcquisitionVerifier {
         &mut self,
         prn: u8,
     ) {
-        self.engine_first.precompute_prn(prn, &self.cache.clone());
+        self.engine_first.precompute_prn(prn, &self.cache);
     }
 
     /// Предварительно вычисляет FFT PRN-кодов для GPS PRN 1-32.
     pub fn precompute_all(&mut self) {
-        self.engine_first.precompute_all(&self.cache.clone());
+        self.engine_first.precompute_all(&self.cache);
     }
 
     /// Верефицирует `prn` двойным проходом с политикой повтора.
@@ -556,7 +556,7 @@ impl AcquisitionVerifier {
 
         // ── Проверка согласованности ──────────────────────────────────────────
         let snr_ok = second.peak_to_noise >= narrow_cfg.cfar_threshold;
-        let doppler_ok = (second.doppler_fine_hz - first.doppler_fine_hz).abs()
+        let doppler_ok = (second.doppler_fine_hz - first.doppler_coarse_hz).abs()
             <= self.config.doppler_tolerance_hz;
 
         if snr_ok && doppler_ok {

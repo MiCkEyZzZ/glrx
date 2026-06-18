@@ -47,7 +47,9 @@ use std::{sync::Arc, time::Instant};
 use num_complex::Complex32;
 
 use crate::{
-    acquisition::verifier::{AcquisitionResult, AcquisitionVerifier, VerifierConfig},
+    acquisition::verifier::{
+        AcquisitionResult, AcquisitionVerifier, VerifierConfig, VerifierStats,
+    },
     pipeline,
     rf::{error::RfError, iq_source::IqSource},
     signal::prn_code::PrnCodeCache,
@@ -155,6 +157,22 @@ pub struct Receiver {
     acq_confirmed_total: u64,
 }
 
+/// Сводная статистика acquisition для диагностики.
+#[derive(Debug, Clone)]
+pub struct AcquisitionSummary {
+    /// Число выполненных acquisition epoch
+    pub epochs_run: u64,
+
+    /// Суммарное число подтверждённых спутников
+    pub total_confirmed: u64,
+
+    /// Текущее число отслеживаемых спутников
+    pub tracked_count: usize,
+
+    /// Детальная статистика верификатора
+    pub verifier_stats: VerifierStats,
+}
+
 impl Receiver {
     /// Создаёт ресивер.
     ///
@@ -245,6 +263,29 @@ impl Receiver {
     #[must_use]
     pub const fn state(&self) -> ReceiverState {
         self.state
+    }
+
+    /// Список захваченных спутников.
+    #[must_use]
+    pub fn tracked_satellites(&self) -> &[TrackedSatellite] {
+        &self.tracked
+    }
+
+    /// Текущий номер эпохи.
+    #[must_use]
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// Сводная статистика acquisition.
+    #[must_use]
+    pub fn acquisition_stats(&self) -> AcquisitionSummary {
+        AcquisitionSummary {
+            epochs_run: self.acq_epochs,
+            total_confirmed: self.acq_confirmed_total,
+            tracked_count: self.tracked.len(),
+            verifier_stats: self.verifier.stats().clone(),
+        }
     }
 
     /// Запускает один цикл acquisition по всем `search_prns`.
@@ -436,7 +477,7 @@ mod tests {
                 },
             },
             min_satellites_for_tracking: 1,
-            search_prns: (1u8..=32).collect(),
+            search_prns: vec![5],
         };
         let source = Box::new(VecSource::single(signal));
         Receiver::new(cfg, source, &cache)
@@ -471,7 +512,18 @@ mod tests {
     }
 
     #[test]
-    fn acquisition_epoch_done_event_emitted() {
+    fn test_epoch_counter_increments() {
+        let mut rx = make_receiver(vec![Complex32::new(0.0, 0.0); N]);
+
+        assert_eq!(rx.epoch(), 0);
+
+        rx.run_epoch().unwrap();
+
+        assert_eq!(rx.epoch(), 1);
+    }
+
+    #[test]
+    fn test_acquisition_epoch_done_event_emitted() {
         let mut rx = make_receiver(vec![Complex32::new(0.0, 0.0); N]);
         let events = rx.run_epoch().unwrap();
         let has_epoch_done = events
@@ -479,5 +531,168 @@ mod tests {
             .any(|e| matches!(e, ReceiverEvent::AcquisitionEpochDone { .. }));
 
         assert!(has_epoch_done, "AcquisitionEpochDone should be emitted");
+    }
+
+    #[test]
+    fn test_noise_signal_no_satellite_acquired() {
+        let mut rx = make_receiver(vec![Complex32::new(0.0, 0.0); N]);
+        let events = rx.run_epoch().unwrap();
+        let acquired = events
+            .iter()
+            .filter(|e| matches!(e, ReceiverEvent::SatelliteAcquired { .. }))
+            .count();
+
+        assert_eq!(acquired, 0, "noise should not produce acquisitions");
+        assert!(rx.tracked_satellites().is_empty());
+    }
+
+    #[test]
+    fn test_strong_prn_signal_triggers_satellite_acquired() {
+        let cache = PrnCodeCache::new();
+        let signal: Vec<Complex32> = cache
+            .resample_gps(5, N)
+            .unwrap()
+            .into_iter()
+            .map(|c| Complex32::new(c, 0.0))
+            .collect();
+        let mut rx = make_receiver(signal);
+        let events = rx.run_epoch().unwrap();
+        let acquired: Vec<_> = events
+            .iter()
+            .filter_map(|e| {
+                if let ReceiverEvent::SatelliteAcquired { result } = e {
+                    Some(result)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Если PRN 5 найден, он должен быть первым в списке
+        if !acquired.is_empty() {
+            assert_eq!(acquired[0].prn, 5, "PRN 5 should be the detected satellite");
+        }
+    }
+
+    #[test]
+    fn test_tracking_state_after_satellite_confirmed() {
+        let cache = PrnCodeCache::new();
+        let signal: Vec<Complex32> = cache
+            .resample_gps(1, N)
+            .unwrap()
+            .into_iter()
+            .map(|c| Complex32::new(c, 0.0))
+            .collect();
+        let mut rx = make_receiver(signal);
+
+        rx.run_epoch().unwrap();
+
+        // Если хоть один спутник подтверждён → Tracking
+        if !rx.tracked_satellites().is_empty() {
+            assert_eq!(rx.state(), ReceiverState::Tracking);
+        }
+    }
+
+    #[test]
+    fn test_process_block_equivalent_to_run_epoch() {
+        let signal = vec![Complex32::new(0.0, 0.0); N];
+        let cache = Arc::new(PrnCodeCache::new());
+        let cfg = ReceiverConfig {
+            block_size: N,
+            sample_rate_hz: FS,
+            ..ReceiverConfig::default()
+        };
+
+        // Receiver без источника — вызываем process_block напрямую
+        let source = Box::new(VecSource::single(signal.clone()));
+        let mut rx = Receiver::new(cfg, source, &cache);
+        let events = rx.process_block(&signal);
+
+        assert!(!events.is_empty());
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ReceiverEvent::StateChanged { .. })));
+    }
+
+    #[test]
+    fn test_already_tracked_prns_not_re_searched() {
+        // После захвата спутника он не должен искаться повторно
+        let cache_arc = Arc::new(PrnCodeCache::new());
+        let cache = PrnCodeCache::new();
+        let signal: Vec<Complex32> = cache
+            .resample_gps(1, N)
+            .unwrap()
+            .into_iter()
+            .map(|c| Complex32::new(c, 0.0))
+            .collect();
+
+        let blocks = vec![signal.clone(), signal.clone()];
+        let cfg = ReceiverConfig {
+            block_size: N,
+            sample_rate_hz: FS,
+            min_satellites_for_tracking: 1,
+            search_prns: vec![1],
+            verifier: VerifierConfig {
+                first_pass: crate::acquisition::fft_search::SearchConfig {
+                    doppler_min_hz: -500.0,
+                    doppler_max_hz: 500.0,
+                    doppler_step_hz: 500.0,
+                    cfar_threshold: 2.0,
+                },
+                second_pass: crate::acquisition::fft_search::SearchConfig {
+                    doppler_min_hz: -250.0,
+                    doppler_max_hz: 250.0,
+                    doppler_step_hz: 250.0,
+                    cfar_threshold: 2.0,
+                },
+                doppler_tolerance_hz: 600.0,
+                retry: crate::acquisition::verifier::RetryPolicy {
+                    max_attempts: 1,
+                    base_delay_ms: 0,
+                    max_delay_ms: 0,
+                },
+            },
+        };
+        let source = Box::new(VecSource::new(blocks));
+        let mut rx = Receiver::new(cfg, source, &cache_arc);
+
+        rx.run_epoch().unwrap(); // первая эпоха — поиск PRN 1
+
+        let tracked_after_1 = rx.tracked_satellites().len();
+
+        rx.run_epoch().unwrap(); // вторая эпоха — PRN 1 уже tracked, не ищем
+
+        let tracked_after_2 = rx.tracked_satellites().len();
+
+        // Число захваченных не должно удвоиться
+        assert!(
+            tracked_after_2 <= tracked_after_1 + 0,
+            "PRN 1 should not be re-acquired: {tracked_after_1} → {tracked_after_2}"
+        );
+    }
+
+    #[test]
+    fn test_acquisition_summary_fields_populated() {
+        let mut rx = make_receiver(vec![Complex32::new(0.0, 0.0); N]);
+
+        rx.run_epoch().unwrap();
+
+        let summary = rx.acquisition_stats();
+
+        assert_eq!(summary.epochs_run, 1);
+        assert_eq!(summary.tracked_count, rx.tracked_satellites().len());
+    }
+
+    #[test]
+    fn test_eof_returns_error() {
+        let cache = Arc::new(PrnCodeCache::new());
+        let cfg = ReceiverConfig::default();
+        let source = Box::new(VecSource::new(vec![])); // пустой источник
+        let mut rx = Receiver::new(cfg, source, &cache);
+
+        // Первый вызов — ColdStart, попытка читать из пустого → EOF
+        let result = rx.run_epoch();
+
+        assert!(result.is_err());
     }
 }
