@@ -21,5 +21,3 @@ Run any example binary:
 ```bash
 cargo run -p glrx-examples --bin <example_name>
 ```
-
-L

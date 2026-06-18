@@ -6,4 +6,5 @@ publish = false
 
 [dependencies]
 glrx = { path = ".." }
+
 num-complex = "0.4.6"
