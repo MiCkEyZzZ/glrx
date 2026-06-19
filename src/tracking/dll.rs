@@ -74,10 +74,10 @@ pub struct DllOutput {
     pub code_phase_offset_chips: f64,
 
     /// Текущая частота кода (chips/s), включающая поправка петли
-    pub code_freq_hz: f64,
+    pub chip_freq_hz: f64,
 
     /// Выход дискриминатора в чипах (диагностика)
-    pub descriminator_output: f32,
+    pub discriminator_output: f32,
 
     /// Выход петлевого фильтра (chips/s, диагностика)
     pub filter_output: f32,
@@ -316,17 +316,72 @@ impl Dll {
 
         DllOutput {
             code_phase_offset_chips: self.code_phase_chips,
-            code_freq_hz: self.chip_freq_hz,
-            descriminator_output: raw_error,
+            chip_freq_hz: self.chip_freq_hz,
+            discriminator_output: raw_error,
             filter_output: filter_out,
             state: self.state,
         }
+    }
+
+    /// Текущая фаза кода (чипы), нормализована в `[0, 1023]`.
+    #[must_use]
+    pub const fn code_phase_offset_chips(&self) -> f64 {
+        self.code_phase_chips
+    }
+
+    /// Текущая частота кода (chi[s/s]).
+    #[must_use]
+    pub const fn chip_freq_hz(&self) -> f64 {
+        self.chip_freq_hz
     }
 
     /// Текущее состояние петли.
     #[must_use]
     pub const fn state(&self) -> DllState {
         self.state
+    }
+
+    /// Число обработанных эпох.
+    #[must_use]
+    pub const fn epochs(&self) -> u64 {
+        self.epochs
+    }
+
+    /// Конфигурация DLL.
+    #[must_use]
+    pub const fn config(&self) -> &DllConfig {
+        &self.config
+    }
+
+    /// Инициализирует DLL известной начальной фазой кода и доплеровской
+    /// поправкой к частоте — вызывается сразу после acquisition.
+    ///
+    /// # Аргументы
+    ///
+    /// * `code_phase_chips` — начальная фаза кода (чипы), например из
+    ///   `AcquisitionResult::code_phase_chips`
+    /// * `doppler_chip_rate_correction` — поправка к номинальной частоте
+    ///   кода (chips/s), обычно пересчитанная из Doppler несущей:
+    ///   `doppler_hz × (chip_rate / carrier_freq_hz)`
+    pub fn initialize(
+        &mut self,
+        code_phase_chips: f64,
+        doppler_chip_rate_correction: f64,
+    ) {
+        self.code_phase_chips = code_phase_chips.rem_euclid(1023.0);
+        self.chip_freq_hz = self.config.nominal_chip_rate_hz + doppler_chip_rate_correction;
+        self.filter.reset();
+        self.state = DllState::Unlocked;
+        self.epochs = 0;
+    }
+
+    /// Полный сброс DLL в начальное состояние.
+    pub fn reset(&mut self) {
+        self.code_phase_chips = 0.0;
+        self.chip_freq_hz = self.config.nominal_chip_rate_hz;
+        self.filter.reset();
+        self.state = DllState::Unlocked;
+        self.epochs = 0;
     }
 }
 
@@ -613,5 +668,141 @@ mod tests {
 
             assert_eq!(dll.epochs, i);
         }
+    }
+
+    #[test]
+    fn test_dll_balanced_epl_does_not_drift_frequency() {
+        let mut dll = Dll::with_defaults();
+        let epl = epl_balanced(1.0);
+        let nominal = dll.config().nominal_chip_rate_hz;
+
+        for _ in 0..100 {
+            dll.update(&epl);
+        }
+
+        let drift = (dll.chip_freq_hz() - nominal).abs();
+
+        assert!(
+            drift < 1.0,
+            "balanced EPL should not drift, drift={drift} chips/s"
+        );
+    }
+
+    #[test]
+    fn test_dll_early_strong_increases_chip_freq() {
+        // Раннaя ветвь сильнее -> код запаздывает -> нужно ускорить локальный код
+        let mut dll = Dll::with_defaults();
+        let epl = epl_with_el(3.0, 1.0);
+        let initial = dll.chip_freq_hz();
+
+        for _ in 0..50 {
+            dll.update(&epl);
+        }
+
+        assert!(
+            dll.chip_freq_hz() > initial,
+            "early strong -> freg should increase: {initial} -> {}",
+            dll.chip_freq_hz()
+        );
+    }
+
+    #[test]
+    fn test_dll_late_strong_decreases_chip_freq() {
+        let mut dll = Dll::with_defaults();
+        let epl = epl_with_el(1.0, 3.0);
+        let initial = dll.chip_freq_hz();
+
+        for _ in 0..50 {
+            dll.update(&epl);
+        }
+
+        assert!(
+            dll.chip_freq_hz() < initial,
+            "late strong → freq should decrease: {initial} → {}",
+            dll.chip_freq_hz()
+        );
+    }
+
+    #[test]
+    fn test_dll_output_respects_clamp() {
+        let mut dll = Dll::new(DllConfig {
+            output_clamp_chips_s: 50.0,
+            ..DllConfig::default()
+        });
+        let extreme_epl = EplOutput {
+            early: Complex32::new(1000.0, 0.0),
+            prompt: Complex32::new(0.5, 0.0),
+            late: Complex32::new(0.001, 0.0),
+        };
+
+        for _ in 0..200 {
+            let out = dll.update(&extreme_epl);
+            let nominal = dll.config().nominal_chip_rate_hz;
+            let deviation = (out.chip_freq_hz - nominal).abs() as f32;
+
+            assert!(
+                deviation <= 50.0 + 1e-3,
+                "exceeded clamp: deviation={deviation}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_dll_code_phase_stays_within_one_period() {
+        let mut dll = Dll::with_defaults();
+        let epl = epl_balanced(1.0);
+
+        for _ in 0..10_000 {
+            dll.update(&epl);
+
+            let phase = dll.code_phase_offset_chips();
+
+            assert!(
+                (0.0..1023.0).contains(&phase),
+                "phase out of range: {phase}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_dll_reset_restores_initial_state() {
+        let mut dll = Dll::with_defaults();
+        let epl = epl_balanced(2.0);
+
+        for _ in 0..100 {
+            dll.update(&epl);
+        }
+
+        dll.reset();
+
+        assert_eq!(dll.state(), DllState::Unlocked);
+        assert_eq!(dll.epochs(), 0);
+        assert!(dll.code_phase_offset_chips().abs() < 1e-9);
+        assert!((dll.chip_freq_hz() - dll.config().nominal_chip_rate_hz).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_dll_initialize_sets_phase_and_doppler_correction() {
+        let mut dll = Dll::with_defaults();
+
+        dll.initialize(512.5, 100.0);
+
+        assert!((dll.code_phase_offset_chips() - 512.5).abs() < 1e-9);
+
+        let expected = dll.config().nominal_chip_rate_hz + 100.0;
+
+        assert!((dll.chip_freq_hz() - expected).abs() < 1e-9);
+        assert_eq!(dll.state(), DllState::Unlocked);
+    }
+
+    #[test]
+    fn test_dll_initialize_wraps_phase_over_1023() {
+        let mut dll = Dll::with_defaults();
+
+        dll.initialize(1500.0, 0.0);
+
+        let phase = dll.code_phase_offset_chips();
+
+        assert!((0.0..1023.0).contains(&phase));
     }
 }
