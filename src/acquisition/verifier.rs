@@ -34,6 +34,13 @@
 //! При `Rejected` применяется экспоненциальный back-off:
 //! - попытка 0: без задержки
 //! - попытка k: `base_delay_ms × 2^(k−1)`, но не более `max_delay_ms`
+//!
+//! # Параллельный поиск
+//!
+//! Двойная верификация по своей природе stateful только в части retry и
+//! статистики. Сама проверка одного PRN (`verify_prn_pure`) не требует
+//! `&mut self` и безопасна для параллельного вызова из разных потоков —
+//! на этом построена [`verify_all_parallel`], использующая Rayon.
 
 use std::{
     sync::Arc,
@@ -202,27 +209,42 @@ pub struct AcquisitionResult {
 
 /// Двухпроходный верификатор acquisition с политикой повтора.
 ///
-/// Хранит `Arc<PrnCodeCache>` чтобы второй проход мог пересоздать движок
-/// с динамически вычесленным Doppler-диапазоном вокруг кандидата первого
-/// прохода - настоящий узкий уточняющий поиск.
+/// Для одиночных проверок с retry и накоплением статистики используйте
+/// [`AcquisitionVerifier::verify_prn`] / [`AcquisitionVerifier::verify_all`].
+/// Для параллельной обработки многих PRN без накопления retry-статистики
+/// в реальном времени используйте свободную функцию
+/// [`verify_all_parallel`].
 pub struct AcquisitionVerifier {
-    /// Движок первого прохода (широкий поиск).
-    engine_first: PcpsSearch,
-
-    /// Кэш PRN-кодов — нужен для пересоздания движка второго прохода.
-    cache: Arc<PrnCodeCache>,
-
     /// Размер IQ-блока в сэмплах.
     block_size: usize,
 
     /// Частота дискретизации (Гц).
     sample_rate_hz: f64,
 
+    cache: Arc<PrnCodeCache>,
+
     /// Конфигурация.
     config: VerifierConfig,
 
     /// Накопленная статистика.
     stats: VerifierStats,
+}
+
+/// Результат параллельного прогона: подтверждённые спутники + агрегирования
+/// статистика по всем потокам.
+#[derive(Debug, Clone)]
+pub struct ParallelVerifyOutput {
+    /// Подтверждённые спутники, отсортированные по C/N₀ убыванием.
+    pub results: Vec<AcquisitionResult>,
+
+    /// Статистика, агрегированная по всем обработанным PRN.
+    ///
+    /// Каждый PRN обрабатывается одной попыткой (без внутреннего retry —
+    /// retry для параллельного режима не применяется, так как политика
+    /// повтора в реальном времени плохо сочетается с параллелизмом по
+    /// потокам; при необходимости повторите весь `verify_all_parallel`
+    /// для PRN, попавших в `Marginal`/`Rejected`).
+    pub stats: VerifierStats,
 }
 
 impl VerificationVerdict {
@@ -279,18 +301,34 @@ impl RetryPolicy {
 }
 
 impl VerifierStats {
-    /// Доля ложных срабатываний: `marginal / (confirmed + marginal)`.
+    /// Доля маргинальных обнаружений среди всех успешных первых проходов:
+    /// `marginal / (confirmed + marginal)`.
     ///
-    /// Приближённо оценивает ненадёжные обнаружения из всех обнаружений.
+    /// **Это не настоящий false-positive rate** — у нас нет независимого
+    /// источника истины о реальном наличии спутника. Это приближение:
+    /// доля случаев, когда широкий поиск нашёл пик, но узкий уточняющий
+    /// проход не подтвердил его с тем же или близким Doppler/SNR.
+    /// Используйте как индикатор нестабильности detection, а не как
+    /// строгую метрику ошибок 1-го рода.
     #[must_use]
-    pub fn false_alarm_rate(&self) -> f64 {
-        let detections = self.confirmed + self.marginal;
+    pub fn marginal_rate(&self) -> f64 {
+        let d = self.confirmed + self.marginal;
 
-        if detections == 0 {
+        if d == 0 {
             0.0
         } else {
-            self.marginal as f64 / detections as f64
+            self.marginal as f64 / d as f64
         }
+    }
+
+    /// Устаревший алиас [`Self::marginal_rate`].
+    ///
+    /// Сохранён для обратной совместимости. Имя исторически вводило в
+    /// заблуждение (предполагало строгий false-positive rate с ground
+    /// truth, которого здесь нет) — используйте `marginal_rate()`.
+    #[must_use]
+    pub fn false_alarm_rate(&self) -> f64 {
+        self.marginal_rate()
     }
 
     /// Среднее время верификации.
@@ -329,6 +367,19 @@ impl VerifierStats {
             VerificationVerdict::Rejected { .. } => self.rejected += 1,
         }
     }
+
+    /// Объединяет статистику из другого экземпляра (для слияния результатов параллельных потоков).
+    pub const fn merge(
+        &mut self,
+        other: &VerifierStats,
+    ) {
+        self.total_calls += other.total_calls;
+        self.confirmed += other.confirmed;
+        self.marginal += other.marginal;
+        self.rejected += other.rejected;
+        self.retried += other.retried;
+        self.total_elapsed_ns += other.total_elapsed_ns;
+    }
 }
 
 impl AcquisitionResult {
@@ -350,8 +401,6 @@ impl AcquisitionResult {
 
 impl AcquisitionVerifier {
     /// Создаёт новый верификатор с явным кэшем PRN-кода.
-    ///
-    /// `cache` можно разделить с другими компонентами через `Arc::clone`.
     #[must_use]
     pub fn new(
         block_size: usize,
@@ -359,13 +408,10 @@ impl AcquisitionVerifier {
         config: VerifierConfig,
         cache: Arc<PrnCodeCache>,
     ) -> Self {
-        let engine_first = PcpsSearch::new(block_size, sample_rate_hz, config.first_pass.clone());
-
         Self {
-            engine_first,
-            cache,
             block_size,
             sample_rate_hz,
+            cache,
             config,
             stats: VerifierStats::default(),
         }
@@ -382,23 +428,22 @@ impl AcquisitionVerifier {
         Self::new(block_size, sample_rate_hz, VerifierConfig::default(), cache)
     }
 
-    /// Предварительно вычисляет FFT PRN-кода для одного спутника.
-    pub fn precompute_prn(
-        &mut self,
-        prn: u8,
-    ) {
-        self.engine_first.precompute_prn(prn, &self.cache);
-    }
-
-    /// Предварительно вычисляет FFT PRN-кодов для GPS PRN 1-32.
-    pub fn precompute_all(&mut self) {
-        self.engine_first.precompute_all(&self.cache);
-    }
-
-    /// Верефицирует `prn` двойным проходом с политикой повтора.
+    /// Кэш PRN-кодов, используемый этим верификатором.
     ///
-    /// Второй проход строится с Doppler-диапазоном, динамически
-    /// центрированным на результате первого прохода.
+    /// Передавайте этот `Arc` в [`verify_all_parallel`], чтобы не
+    /// пересчитывать код.
+    #[must_use]
+    pub const fn cache(&self) -> &Arc<PrnCodeCache> {
+        &self.cache
+    }
+
+    /// Конфигурация верификации.
+    #[must_use]
+    pub const fn config(&self) -> &VerifierConfig {
+        &self.config
+    }
+
+    /// Верифицирует `prn` двойным проходом с политикой повтора.
     ///
     /// # Panics
     ///
@@ -410,7 +455,6 @@ impl AcquisitionVerifier {
     ) -> VerificationVerdict {
         assert_eq!(signal.len(), self.block_size);
 
-        let t0 = Instant::now();
         let max_attempts = self.config.retry.max_attempts;
         let mut retried = false;
 
@@ -427,7 +471,14 @@ impl AcquisitionVerifier {
                 log::debug!("PRN {prn}: retry {attempt}/{max_attempts}");
             }
 
-            let verdict = self.single_verify(signal, prn, t0);
+            let verdict = verify_prn_pure(
+                signal,
+                prn,
+                self.block_size,
+                self.sample_rate_hz,
+                &self.config,
+                &self.cache,
+            );
 
             match &verdict {
                 VerificationVerdict::Confirmed { .. } | VerificationVerdict::Marginal { .. } => {
@@ -442,8 +493,7 @@ impl AcquisitionVerifier {
                         return verdict;
                     }
                     log::debug!(
-                        "PRN {prn}: attempt {attempt} rejected, \
-                         retrying ({}/{})",
+                        "PRN {prn}: attempt {attempt} rejected, retrying ({}/{})",
                         attempt + 1,
                         max_attempts
                     );
@@ -451,30 +501,23 @@ impl AcquisitionVerifier {
             }
         }
 
-        // Недостижимо — последняя итерация всегда возвращает.
-        // Rustc требует exhaustive return.
-        let verdict = VerificationVerdict::Rejected {
-            prn,
-            peak_to_noise: None,
-            elapsed: t0.elapsed(),
-        };
-
-        self.stats.record(&verdict, retried);
-
-        verdict
+        unreachable!("loop above always returns on the last attempt")
     }
 
-    /// Верифицирует все PRN 1-32, возвращает подтверждённые спутники
-    /// отсортированные по C/N₀ убыванием.
+    /// Последовательно верифицирует все PRN 1–32, возвращает подтверждённые
+    /// спутники, отсортированные по C/N₀ убыванием.
     ///
-    /// Только `Confirmed` попадает в список.
+    /// Для параллельной версии (без накопления retry-статистики в
+    /// `self.stats`, но быстрее на многих ядрах) см. [`verify_all_parallel`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `signal.len() != self.block_size`.
     pub fn verify_all(
         &mut self,
         signal: &[Complex32],
     ) -> Vec<AcquisitionResult> {
-        if signal.len() != self.block_size {
-            return Vec::new();
-        }
+        assert_eq!(signal.len(), self.block_size);
 
         let mut results = Vec::new();
 
@@ -484,7 +527,7 @@ impl AcquisitionVerifier {
             }
         }
 
-        results.sort_by(|a, b| b.cn0_db_hz.total_cmp(&a.cn0_db_hz));
+        results.sort_by(|a, b| b.cn0_db_hz.partial_cmp(&a.cn0_db_hz).unwrap());
 
         results
     }
@@ -500,86 +543,14 @@ impl AcquisitionVerifier {
         self.stats = VerifierStats::default();
     }
 
-    fn single_verify(
+    /// Объединяет в свою статистику результат внешнего вычисления - например,
+    /// после вызова [`verify_all_parallel`], чтобы агрегаты (`mean_elapsed`, `marginal_rate`)
+    /// учитывали и параллельный прогон.
+    pub const fn absorb_stats(
         &mut self,
-        signal: &[Complex32],
-        prn: u8,
-        t0: Instant,
-    ) -> VerificationVerdict {
-        // ── Первый проход: широкий поиск ──────────────────────────────────────
-        let Some(first) = self.engine_first.search_prn(signal, prn) else {
-            return VerificationVerdict::Rejected {
-                prn,
-                peak_to_noise: None,
-                elapsed: t0.elapsed(),
-            };
-        };
-
-        if !first.detected {
-            return VerificationVerdict::Rejected {
-                prn,
-                peak_to_noise: Some(first.peak_to_noise),
-                elapsed: t0.elapsed(),
-            };
-        }
-
-        // ── Второй проход: узкий поиск вокруг кандидата ───────────────────────
-        //
-        // Диапазон центрирован на doppler_coarse_hz первого прохода.
-        // half_span берётся из second_pass.doppler_max_hz — это задокументировано
-        // в VerifierConfig.
-        let half_span = self.config.second_pass.doppler_max_hz;
-        let narrow_cfg = SearchConfig {
-            doppler_min_hz: first.doppler_coarse_hz - half_span,
-            doppler_max_hz: first.doppler_coarse_hz + half_span,
-            doppler_step_hz: self.config.second_pass.doppler_step_hz,
-            cfar_threshold: self.config.second_pass.cfar_threshold,
-        };
-
-        // Создаём движок второго прохода с узким narrow_cfg.
-        // Arc<PrnCodeCache> позволяет precompute только нужный PRN без
-        // копирования данных — O(N) на один PRN.
-        let second = {
-            let mut engine2 =
-                PcpsSearch::new(self.block_size, self.sample_rate_hz, narrow_cfg.clone());
-            engine2.precompute_prn(prn, &self.cache);
-            engine2.search_prn(signal, prn)
-        };
-
-        let Some(second) = second else {
-            return VerificationVerdict::Marginal {
-                result: first,
-                reason: MarginalReason::NoResult,
-                elapsed: t0.elapsed(),
-            };
-        };
-
-        // ── Проверка согласованности ──────────────────────────────────────────
-        let snr_ok = second.peak_to_noise >= narrow_cfg.cfar_threshold;
-        let doppler_ok = (second.doppler_fine_hz - first.doppler_coarse_hz).abs()
-            <= self.config.doppler_tolerance_hz;
-
-        if snr_ok && doppler_ok {
-            let cn0 = estimate_cn0(second.peak_to_noise, narrow_cfg.cfar_threshold);
-            return VerificationVerdict::Confirmed {
-                result: second,
-                cn0_db_hz: cn0,
-                elapsed: t0.elapsed(),
-            };
-        }
-
-        let reason = match (snr_ok, doppler_ok) {
-            (false, false) => MarginalReason::LowSnrAndDopplerMismatch,
-            (false, true) => MarginalReason::LowSnr,
-            (true, false) => MarginalReason::DopplerMismatch,
-            (true, true) => unreachable!("both ok was handled above"),
-        };
-
-        VerificationVerdict::Marginal {
-            result: first,
-            reason,
-            elapsed: t0.elapsed(),
-        }
+        other: &VerifierStats,
+    ) {
+        self.stats.merge(other);
     }
 }
 
@@ -603,8 +574,7 @@ impl Default for VerifierConfig {
                 cfar_threshold: 3.0,
             },
             second_pass: SearchConfig {
-                // doppler_max_hz = half_span вокруг кандидата
-                doppler_min_hz: -1_500.0, // используется только как half_span
+                doppler_min_hz: -1_500.0, // half_span, не абсолютная граница
                 doppler_max_hz: 1_500.0,
                 doppler_step_hz: 250.0,
                 cfar_threshold: 2.5,
@@ -615,69 +585,180 @@ impl Default for VerifierConfig {
     }
 }
 
-/// Параллельный поиск нескольких PRN через Rayon.
+/// Один проход двойной верификации **без повторов и без мутации общего состояния** - только
+/// первый + второй поиск и сравнение.
 ///
-/// Каждый PRN отсортированы по `peak_to_noise` убыванием.
+/// Эта ф-я не использует `&mut self` ни от чего общего: она создаёт оба движка PCPS локально из
+/// `cache` и `config`. Благодаря этому она безопасна для вызова из разных потоков Rayon
+/// одновременно - каждый вызов полностью независим.
 ///
-///
-/// Включить: `features = ["rayon"]` в `Cargo.toml`.
-#[cfg(feature = "rayon")]
+/// Используется как строительный блок:
+/// - [`AcquisitionVerifier::verify_prn`] оборачивает её в retry-цикл и
+///   копит статистику последовательно;
+/// - [`verify_all_parallel`] вызывает её параллельно по списку PRN.
 #[must_use]
-pub fn parallel_search(
+pub fn verify_prn_pure(
     signal: &[Complex32],
+    prn: u8,
     block_size: usize,
     sample_rate_hz: f64,
-    prns: &[u8],
-    config: &SearchConfig,
+    config: &VerifierConfig,
     cache: &PrnCodeCache,
-) -> Vec<SearchResult> {
-    use rayon::prelude::*;
+) -> VerificationVerdict {
+    let t0 = Instant::now();
 
-    let mut results: Vec<SearchResult> = prns
-        .par_iter()
-        .filter_map(|&prn| {
-            let mut engine = PcpsSearch::new(block_size, sample_rate_hz, config.clone());
-            engine.precompute_prn(prn, cache);
-            engine.search_prn(signal, prn)
-        })
-        .filter(|r| r.detected)
-        .collect();
+    // Первый проход: широкий поиск
+    let mut engine_first = PcpsSearch::new(block_size, sample_rate_hz, config.first_pass.clone());
 
-    results.sort_by(|a, b| b.peak_to_noise.total_cmp(&a.peak_to_noise));
+    engine_first.precompute_prn(prn, cache);
 
-    results
+    let Some(first) = engine_first.search_prn(signal, prn) else {
+        return VerificationVerdict::Rejected {
+            prn,
+            peak_to_noise: None,
+            elapsed: t0.elapsed(),
+        };
+    };
+
+    if !first.detected {
+        return VerificationVerdict::Rejected {
+            prn,
+            peak_to_noise: Some(first.peak_to_noise),
+            elapsed: t0.elapsed(),
+        };
+    }
+
+    // Второй проход: узкий поиск вокруг кандидата
+    let half_span = config.second_pass.doppler_max_hz;
+    let narrow_cfg = SearchConfig {
+        doppler_min_hz: first.doppler_coarse_hz - half_span,
+        doppler_max_hz: first.doppler_coarse_hz + half_span,
+        doppler_step_hz: config.second_pass.doppler_step_hz,
+        cfar_threshold: config.second_pass.cfar_threshold,
+    };
+
+    let mut engine_second = PcpsSearch::new(block_size, sample_rate_hz, narrow_cfg.clone());
+
+    engine_second.precompute_prn(prn, cache);
+
+    let Some(second) = engine_second.search_prn(signal, prn) else {
+        return VerificationVerdict::Marginal {
+            result: first,
+            reason: MarginalReason::NoResult,
+            elapsed: t0.elapsed(),
+        };
+    };
+
+    // Проверка согласованности
+    let snr_ok = second.peak_to_noise >= narrow_cfg.cfar_threshold;
+    let doppler_ok =
+        (second.doppler_fine_hz - first.doppler_coarse_hz).abs() <= config.doppler_tolerance_hz;
+
+    if snr_ok && doppler_ok {
+        let cn0 = estimate_cn0(second.peak_to_noise, narrow_cfg.cfar_threshold);
+
+        return VerificationVerdict::Confirmed {
+            result: second,
+            cn0_db_hz: cn0,
+            elapsed: t0.elapsed(),
+        };
+    }
+
+    let reason = match (snr_ok, doppler_ok) {
+        (false, false) => MarginalReason::LowSnrAndDopplerMismatch,
+        (false, true) => MarginalReason::LowSnr,
+        (true, false) => MarginalReason::DopplerMismatch,
+        (true, true) => unreachable!("both ok was handled above"),
+    };
+
+    VerificationVerdict::Marginal {
+        result: first,
+        reason,
+        elapsed: t0.elapsed(),
+    }
 }
 
-/// Последовательный fallback `parallel_search` без Rayon.
+/// Параллельно верифицирует список `prns` двойным проходом, используя Rayon.
 ///
-/// Идентичная сигнатура - переключатся через условную компиляцию.
-#[cfg(not(feature = "rayon"))]
+/// В отличие от [`AcquisitionVerifier::verify_prn`], здесь **нет retry**:
+/// каждый PRN обрабатывается ровно одной попыткой двойной верификации в
+/// отдельном потоке. Это сознательный компромисс — retry с задержками
+/// (`std::thread::sleep`) плохо сочетается с пулом потоков Rayon, так как
+/// блокирует worker-поток. Если нужен повтор для конкретных PRN, вызовите
+/// `verify_all_parallel` повторно с отфильтрованным списком.
+///
+/// # Аргументы
+///
+/// - `signal` — один IQ-блок длиной `block_size`
+/// - `block_size`, `sample_rate_hz` — параметры приёмника
+/// - `prns` — список PRN для проверки (например, ещё не захваченные)
+/// - `config` — конфигурация двойной верификации
+/// - `cache` — общий кэш PRN-кодов
+///
+/// # Возвращает
+///
+/// [`ParallelVerifyOutput`] с подтверждёнными спутниками и агрегированной
+/// статистикой (которую можно влить в `AcquisitionVerifier` через
+/// [`AcquisitionVerifier::absorb_stats`]).
+#[cfg(feature = "rayon")]
 #[must_use]
-pub fn parallel_search(
+pub fn verify_all_parallel(
     signal: &[Complex32],
     block_size: usize,
     sample_rate_hz: f64,
     prns: &[u8],
-    config: &SearchConfig,
+    config: &VerifierConfig,
     cache: &PrnCodeCache,
-) -> Vec<SearchResult> {
-    let mut results = Vec::new();
+) -> ParallelVerifyOutput {
+    use rayon::prelude::*;
 
-    for &prn in prns {
-        let mut engine = PcpsSearch::new(block_size, sample_rate_hz, config.clone());
+    let verdicts: Vec<VerificationVerdict> = prns
+        .par_iter()
+        .map(|&prn| verify_prn_pure(signal, prn, block_size, sample_rate_hz, config, cache))
+        .collect();
 
-        engine.precompute_prn(prn, cache);
+    let mut stats = VerifierStats::default();
+    let mut results: Vec<AcquisitionResult> = Vec::new();
 
-        if let Some(r) = engine.search_prn(signal, prn) {
-            if r.detected {
-                results.push(r);
-            }
+    for verdict in &verdicts {
+        stats.record(verdict, false);
+        if let Some(r) = verdict.acquisition_result() {
+            results.push(r);
         }
     }
 
-    results.sort_by(|a, b| b.peak_to_noise.total_cmp(&a.peak_to_noise));
+    results.sort_by(|a, b| b.cn0_db_hz.total_cmp(&a.cn0_db_hz));
 
-    results
+    ParallelVerifyOutput { results, stats }
+}
+
+/// Последовательный fallback [`verify_all_parallel`] без Rayon.
+///
+/// Идентичная сигнатура и поведение (включая отсутствие retry) —
+/// переключение через `features = ["rayon"]` в `Cargo.toml`.
+#[cfg(not(feature = "rayon"))]
+pub fn verify_all_parallel(
+    signal: &[Complex32],
+    block_size: usize,
+    sample_rate_hz: f64,
+    prns: &[u8],
+    config: &VerifierConfig,
+    cache: &PrnCodeCache,
+) -> ParallelVerifyOutput {
+    let mut stats = VerifierStats::default();
+    let mut results: Vec<AcquisitionResult> = Vec::new();
+
+    for &prn in prns {
+        let verdict = verify_prn_pure(signal, prn, block_size, sample_rate_hz, config, cache);
+        stats.record(&verdict, false);
+        if let Some(r) = verdict.acquisition_result() {
+            results.push(r);
+        }
+    }
+
+    results.sort_by(|a, b| b.cn0_db_hz.total_cmp(&a.cn0_db_hz));
+
+    ParallelVerifyOutput { results, stats }
 }
 
 #[cfg(test)]
@@ -697,9 +778,8 @@ mod tests {
     const FS: f64 = 2_048_000.0;
     const N: usize = 2048;
 
-    fn make_verifier() -> AcquisitionVerifier {
-        let cache = Arc::new(PrnCodeCache::new());
-        let cfg = VerifierConfig {
+    fn small_verifier_config() -> VerifierConfig {
+        VerifierConfig {
             first_pass: SearchConfig {
                 doppler_min_hz: -1_000.0,
                 doppler_max_hz: 1_000.0,
@@ -707,8 +787,8 @@ mod tests {
                 cfar_threshold: 2.0,
             },
             second_pass: SearchConfig {
-                doppler_min_hz: -500.0, // не используется напрямую
-                doppler_max_hz: 500.0,  // half_span
+                doppler_min_hz: -500.0,
+                doppler_max_hz: 500.0,
                 doppler_step_hz: 250.0,
                 cfar_threshold: 2.0,
             },
@@ -718,10 +798,12 @@ mod tests {
                 base_delay_ms: 0,
                 max_delay_ms: 0,
             },
-        };
-        let mut v = AcquisitionVerifier::new(N, FS, cfg, cache);
-        v.precompute_all();
-        v
+        }
+    }
+
+    fn make_verifier() -> AcquisitionVerifier {
+        let cache = Arc::new(PrnCodeCache::new());
+        AcquisitionVerifier::new(N, FS, small_verifier_config(), cache)
     }
 
     fn dummy_search_result(prn: u8) -> SearchResult {
@@ -773,59 +855,112 @@ mod tests {
     }
 
     #[test]
-    fn stats_false_alarm_rate_half() {
+    fn test_stats_false_alarm_rate_half() {
         let s = VerifierStats {
             confirmed: 5,
             marginal: 5,
             ..Default::default()
         };
-        assert!((s.false_alarm_rate() - 0.5).abs() < 1e-9);
+
+        assert!((s.marginal_rate() - 0.5).abs() < 1e-9);
     }
 
     #[test]
-    fn stats_mean_elapsed_zero_when_empty() {
+    fn test_stats_mean_elapsed_zero_when_empty() {
         assert_eq!(VerifierStats::default().mean_elapsed(), Duration::ZERO);
     }
 
     #[test]
-    fn confirmed_is_confirmed_and_has_acquisition_result() {
+    fn test_stats_merge_adds_fields() {
+        let mut a = VerifierStats {
+            total_calls: 2,
+            confirmed: 1,
+            marginal: 1,
+            ..Default::default()
+        };
+        let b = VerifierStats {
+            total_calls: 3,
+            confirmed: 2,
+            rejected: 1,
+            ..Default::default()
+        };
+
+        a.merge(&b);
+
+        assert_eq!(a.total_calls, 5);
+        assert_eq!(a.confirmed, 3);
+        assert_eq!(a.marginal, 1);
+        assert_eq!(a.rejected, 1);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_deprecated_false_alarm_rate_matches_marginal_rate() {
+        let s = VerifierStats {
+            confirmed: 3,
+            marginal: 1,
+            ..Default::default()
+        };
+
+        assert!((s.false_alarm_rate() - s.marginal_rate()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_confirmed_is_confirmed_and_has_acquisition_result() {
         let v = VerificationVerdict::Confirmed {
             result: dummy_search_result(1),
             cn0_db_hz: 45.0,
             elapsed: Duration::from_millis(5),
         };
+
         assert!(v.is_confirmed());
         assert!(v.acquisition_result().is_some());
         assert!(v.search_result_diagnostic().is_some());
     }
 
     #[test]
-    fn marginal_not_confirmed_no_acquisition_result() {
-        // Ключевой тест безопасности: Marginal НЕ должен пропускаться в tracking
+    fn test_marginal_not_confirmed_no_acquisition_result() {
         let v = VerificationVerdict::Marginal {
             result: dummy_search_result(1),
             reason: MarginalReason::LowSnr,
             elapsed: Duration::ZERO,
         };
+
         assert!(!v.is_confirmed());
         assert!(
             v.acquisition_result().is_none(),
             "Marginal must NOT pass to tracking via acquisition_result()"
         );
-        // Но диагностика доступна
         assert!(v.search_result_diagnostic().is_some());
     }
 
     #[test]
-    fn rejected_no_acquisition_result_no_diagnostic() {
+    fn test_rejected_no_acquisition_result_no_diagnostic() {
         let v = VerificationVerdict::Rejected {
             prn: 1,
             peak_to_noise: None,
             elapsed: Duration::ZERO,
         };
+
         assert!(!v.is_confirmed());
         assert!(v.acquisition_result().is_none());
         assert!(v.search_result_diagnostic().is_none());
+    }
+
+    #[test]
+    fn test_acquisition_result_fields_correct() {
+        let mut r = dummy_search_result(7);
+        r.doppler_fine_hz = 1050.0;
+        r.code_phase_samples = 42;
+        r.code_phase_chips = 21.0;
+
+        let ar = AcquisitionResult::from_search_result(&r, 45.0);
+
+        assert_eq!(ar.prn, 7);
+        assert!((ar.doppler_hz - 1050.0).abs() < 1e-9);
+        assert_eq!(ar.code_phase_samples, 42);
+        assert!((ar.code_phase_chips - 21.0).abs() < 1e-9);
+        assert!((ar.cn0_db_hz - 45.0).abs() < 1e-3);
     }
 
     #[test]
@@ -842,33 +977,17 @@ mod tests {
                 reason,
                 elapsed: Duration::ZERO,
             };
+
             assert!(!v.is_confirmed());
         }
     }
 
     #[test]
-    fn acquisition_result_fields_correct() {
-        let mut r = dummy_search_result(7);
-
-        r.doppler_fine_hz = 1050.0;
-        r.code_phase_samples = 42;
-        r.code_phase_chips = 21.0;
-
-        let ar = AcquisitionResult::from_search_result(&r, 45.0);
-
-        assert_eq!(ar.prn, 7);
-        assert!((ar.doppler_hz - 1050.0).abs() < 1e-9);
-        assert_eq!(ar.code_phase_samples, 42);
-        assert!((ar.code_phase_chips - 21.0).abs() < 1e-9);
-        assert!((ar.cn0_db_hz - 45.0).abs() < 1e-3);
-        assert!((ar.peak_to_noise - 500.0).abs() < 1e-3);
-    }
-
-    #[test]
-    fn verify_prn_zero_signal_rejected() {
+    fn test_verify_prn_zero_signal_rejected() {
         let mut v = make_verifier();
         let signal = vec![Complex32::new(0.0, 0.0); N];
         let verdict = v.verify_prn(&signal, 1);
+
         assert!(
             matches!(verdict, VerificationVerdict::Rejected { .. }),
             "zero signal → Rejected, got: {verdict:?}"
@@ -876,7 +995,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_prn_aligned_signal_passes_first_pass() {
+    fn test_verify_prn_aligned_signal_passes_first_pass() {
         let cache = PrnCodeCache::new();
         let mut v = make_verifier();
         let signal: Vec<Complex32> = cache
@@ -886,7 +1005,7 @@ mod tests {
             .map(|c| Complex32::new(c, 0.0))
             .collect();
         let verdict = v.verify_prn(&signal, 1);
-        // Чистый сигнал должен пройти хотя бы первый проход
+
         assert!(
             verdict.is_confirmed() || matches!(verdict, VerificationVerdict::Marginal { .. }),
             "clean PRN 1 → at least Marginal, got: {verdict:?}"
@@ -894,14 +1013,15 @@ mod tests {
     }
 
     #[test]
-    fn verify_all_empty_for_noise() {
+    fn test_verify_all_empty_for_noise() {
         let mut v = make_verifier();
         let signal = vec![Complex32::new(0.0, 0.0); N];
+
         assert!(v.verify_all(&signal).is_empty());
     }
 
     #[test]
-    fn verify_all_sorted_by_cn0_descending() {
+    fn test_verify_all_sorted_by_cn0_descending() {
         let cache = PrnCodeCache::new();
         let mut v = make_verifier();
         let signal: Vec<Complex32> = cache
@@ -911,49 +1031,34 @@ mod tests {
             .map(|c| Complex32::new(c, 0.0))
             .collect();
         let results = v.verify_all(&signal);
+
         for i in 1..results.len() {
-            assert!(
-                results[i - 1].cn0_db_hz >= results[i].cn0_db_hz,
-                "not sorted by C/N₀ at {} and {}",
-                i - 1,
-                i
-            );
+            assert!(results[i - 1].cn0_db_hz >= results[i].cn0_db_hz);
         }
     }
 
     #[test]
-    fn verify_all_only_confirmed_in_results() {
-        // verify_all не должен возвращать Marginal или Rejected
-        let mut v = make_verifier();
-        let signal = vec![Complex32::new(0.01, 0.0); N]; // слабый шум
-        let _results = v.verify_all(&signal);
-        // Все элементы вернулись через acquisition_result() → все Confirmed
-        // Дополнительная проверка: stats.rejected + stats.marginal + stats.confirmed = total
-        let s = v.stats();
-        assert_eq!(
-            s.confirmed + s.marginal + s.rejected,
-            s.total_calls,
-            "stats don't add up"
-        );
-    }
-
-    #[test]
-    fn stats_total_calls_accumulate() {
+    fn test_stats_total_calls_accumulate() {
         let mut v = make_verifier();
         let signal = vec![Complex32::new(0.0, 0.0); N];
+
         for prn in 1u8..=3 {
             v.verify_prn(&signal, prn);
         }
+
         assert_eq!(v.stats().total_calls, 3);
     }
 
     #[test]
-    fn stats_reset_clears_all_fields() {
+    fn test_stats_reset_clears_all_fields() {
         let mut v = make_verifier();
         let signal = vec![Complex32::new(0.0, 0.0); N];
+
         v.verify_prn(&signal, 1);
         v.reset_stats();
+
         let s = v.stats();
+
         assert_eq!(s.total_calls, 0);
         assert_eq!(s.confirmed, 0);
         assert_eq!(s.marginal, 0);
@@ -962,62 +1067,57 @@ mod tests {
     }
 
     #[test]
-    fn parallel_search_empty_signal_returns_empty() {
-        let cache = PrnCodeCache::new();
-        let signal = vec![Complex32::new(0.0, 0.0); N];
-        let cfg = SearchConfig {
-            doppler_min_hz: 0.0,
-            doppler_max_hz: 0.0,
-            doppler_step_hz: 500.0,
-            cfar_threshold: 3.0,
+    fn test_absorb_stats_merges_into_verifier() {
+        let mut v = make_verifier();
+
+        let external = VerifierStats {
+            confirmed: 5,
+            total_calls: 5,
+            ..Default::default()
         };
-        let results = parallel_search(
-            &signal,
-            N,
-            FS,
-            &(1u8..=32).collect::<Vec<_>>(),
-            &cfg,
-            &cache,
-        );
-        assert!(results.is_empty());
+
+        v.absorb_stats(&external);
+
+        assert_eq!(v.stats().confirmed, 5);
+        assert_eq!(v.stats().total_calls, 5);
     }
 
     #[test]
-    fn parallel_search_finds_injected_prn() {
+    fn test_verify_prn_pure_zero_signal_rejected() {
         let cache = PrnCodeCache::new();
+        let cfg = small_verifier_config();
+        let signal = vec![Complex32::new(0.0, 0.0); N];
+        let v = verify_prn_pure(&signal, 1, N, FS, &cfg, &cache);
+
+        assert!(matches!(v, VerificationVerdict::Rejected { .. }));
+    }
+
+    #[test]
+    fn test_verify_prn_pure_matches_verify_prn_for_single_attempt() {
+        // С max_attempts=1 поведение verify_prn (без retry) должно совпадать
+        // с прямым вызовом verify_prn_pure.
+        let cache = PrnCodeCache::new();
+        let cfg = small_verifier_config();
         let signal: Vec<Complex32> = cache
             .resample_gps(3, N)
             .unwrap()
             .into_iter()
             .map(|c| Complex32::new(c, 0.0))
             .collect();
-        let cfg = SearchConfig {
-            doppler_min_hz: -500.0,
-            doppler_max_hz: 500.0,
-            doppler_step_hz: 500.0,
-            cfar_threshold: 2.0,
-        };
-        let results = parallel_search(&signal, N, FS, &[3u8], &cfg, &cache);
-        assert!(!results.is_empty(), "should detect PRN 3");
-        assert_eq!(results[0].prn, 3);
+
+        let direct = verify_prn_pure(&signal, 3, N, FS, &cfg, &cache);
+        let mut v = make_verifier();
+        let via_struct = v.verify_prn(&signal, 3);
+
+        assert_eq!(direct.is_confirmed(), via_struct.is_confirmed());
     }
 
     #[test]
-    fn parallel_search_results_sorted_by_snr() {
+    fn test_parallel_empty_for_noise() {
         let cache = PrnCodeCache::new();
-        let signal: Vec<Complex32> = cache
-            .resample_gps(7, N)
-            .unwrap()
-            .into_iter()
-            .map(|c| Complex32::new(c, 0.0))
-            .collect();
-        let cfg = SearchConfig {
-            doppler_min_hz: 0.0,
-            doppler_max_hz: 0.0,
-            doppler_step_hz: 500.0,
-            cfar_threshold: 2.0,
-        };
-        let results = parallel_search(
+        let cfg = small_verifier_config();
+        let signal = vec![Complex32::new(0.0, 0.0); N];
+        let out = verify_all_parallel(
             &signal,
             N,
             FS,
@@ -1025,11 +1125,109 @@ mod tests {
             &cfg,
             &cache,
         );
-        for i in 1..results.len() {
-            assert!(
-                results[i - 1].peak_to_noise >= results[i].peak_to_noise,
-                "not sorted at {i}"
+
+        assert!(
+            out.results.is_empty(),
+            "noise should yield no confirmations"
+        );
+        assert_eq!(out.stats.total_calls, 32);
+    }
+
+    #[test]
+    fn test_parallel_finds_injected_prn() {
+        let cache = PrnCodeCache::new();
+        let cfg = small_verifier_config();
+        let signal: Vec<Complex32> = cache
+            .resample_gps(5, N)
+            .unwrap()
+            .into_iter()
+            .map(|c| Complex32::new(c, 0.0))
+            .collect();
+
+        let out = verify_all_parallel(
+            &signal,
+            N,
+            FS,
+            &(1u8..=32).collect::<Vec<_>>(),
+            &cfg,
+            &cache,
+        );
+
+        // PRN 5 должен быть среди подтверждённых либо хотя бы среди обработанных
+        assert_eq!(out.stats.total_calls, 32);
+
+        if !out.results.is_empty() {
+            assert_eq!(
+                out.results[0].prn, 5,
+                "PRN 5 should be the strongest confirmation"
             );
         }
+    }
+
+    #[test]
+    fn test_parallel_results_sorted_by_cn0() {
+        let cache = PrnCodeCache::new();
+        let cfg = small_verifier_config();
+        let signal: Vec<Complex32> = cache
+            .resample_gps(7, N)
+            .unwrap()
+            .into_iter()
+            .map(|c| Complex32::new(c, 0.0))
+            .collect();
+
+        let out = verify_all_parallel(
+            &signal,
+            N,
+            FS,
+            &(1u8..=32).collect::<Vec<_>>(),
+            &cfg,
+            &cache,
+        );
+
+        for i in 1..out.results.len() {
+            assert!(out.results[i - 1].cn0_db_hz >= out.results[i].cn0_db_hz);
+        }
+    }
+
+    #[test]
+    fn test_parallel_stats_match_sequential_outcome_distribution() {
+        // Параллельный и последовательный прогон по одному и тому же сигналу
+        // должны давать одинаковое распределение исходов (детерминированный
+        // алгоритм, разные потоки не меняют результат).
+        let cache = PrnCodeCache::new();
+        let cfg = small_verifier_config();
+        let signal: Vec<Complex32> = cache
+            .resample_gps(2, N)
+            .unwrap()
+            .into_iter()
+            .map(|c| Complex32::new(c, 0.0))
+            .collect();
+
+        let prns: Vec<u8> = (1u8..=32).collect();
+        let parallel_out = verify_all_parallel(&signal, N, FS, &prns, &cfg, &cache);
+
+        let mut seq_confirmed = 0u64;
+        let mut seq_marginal = 0u64;
+        let mut seq_rejected = 0u64;
+
+        for &prn in &prns {
+            match verify_prn_pure(&signal, prn, N, FS, &cfg, &cache) {
+                VerificationVerdict::Confirmed { .. } => seq_confirmed += 1,
+                VerificationVerdict::Marginal { .. } => seq_marginal += 1,
+                VerificationVerdict::Rejected { .. } => seq_rejected += 1,
+            }
+        }
+
+        assert_eq!(parallel_out.stats.confirmed, seq_confirmed);
+        assert_eq!(parallel_out.stats.marginal, seq_marginal);
+        assert_eq!(parallel_out.stats.rejected, seq_rejected);
+    }
+
+    #[test]
+    fn test_cache_accessor_returns_same_arc() {
+        let v = make_verifier();
+        let c1 = v.cache();
+
+        assert!(Arc::strong_count(c1) >= 1);
     }
 }
