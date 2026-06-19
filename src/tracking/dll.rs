@@ -410,7 +410,7 @@ impl Dll {
     }
 
     /// Полный сброс DLL в начальное состояние.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.code_phase_chips = 0.0;
         self.chip_freq_hz = self.config.nominal_chip_rate_hz;
         self.filter.reset();
@@ -1004,7 +1004,7 @@ mod tests {
         }
 
         assert!(
-            dll.chip_freq_hz() != freq_before_jump,
+            (dll.chip_freq_hz() - freq_before_jump).abs() > 1e-9,
             "DLL should react to the new discriminator error after the jump"
         );
         assert!(dll.chip_freq_hz().is_finite());
@@ -1040,10 +1040,7 @@ mod tests {
         let prn_code: Vec<f32> = cache.resample_gps(2, N).unwrap();
         let delay = 2usize;
         let mut delayed = vec![0.0_f32; N];
-
-        for i in delay..N {
-            delayed[i] = prn_code[i - delay];
-        }
+        delayed[delay..N].copy_from_slice(&prn_code[..(N - delay)]);
 
         let signal: Vec<Complex32> = delayed.iter().map(|&c| Complex32::new(c, 0.0)).collect();
         let mut dll = Dll::with_defaults();
