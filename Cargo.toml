@@ -7,7 +7,7 @@ members = [
 
 [package]
 name = "glrx"
-version = "0.1.0"
+version = "0.2.0"
 description = "GNSS software-defined receiver"
 documentation = "https://docs.rs/glrx"
 homepage = "https://github.com/MiCkEyZzZ/glrx"
