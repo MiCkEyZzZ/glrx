@@ -2,6 +2,40 @@
 //!
 //! Отслеживает фазу PRN-кода спутника. Без DLL код-фаза уплывает отнтсительно
 //! принимаемого сигнала, и вычислить псевдодальность становится невозможно.
+//!
+//! # Контур
+//!
+//! ```text
+//! correlator_epl(signal, early, prompt, late)
+//!     │  EplOutput { E, P, L }
+//!     ▼
+//! discriminator: dll_nelp() | dll_ele()      ← EplOutput (signal/discriminators.rs)
+//!     │  ошибка (единицы дискриминатора)
+//!     ▼
+//! масштабирование в чипы (÷ 2·half_chip_spacing)
+//!     │  ошибка в чипах
+//!     ▼
+//! DllLoopFilter (2-й порядок, PI)
+//!     │  поправка частоты кода (chips/s)
+//!     ▼
+//! Dll::chip_freq_hz()              → код NCO
+//! Dll::code_phase_offset_chips()   → вход в make_epl_replicas на след. эпохе
+//! ```
+//!
+//! # Петлевой фильтр (как в `docs/TRACKING.md`)
+//!
+//! ```text
+//! ωₙ = Bₗ · 8ζ / (4ζ² + 1)
+//! τ₁ = 1 / ωₙ²
+//! τ₂ = 2ζ / ωₙ
+//!
+//! y_i[k] = y_i[k-1] + e[k] · T / τ₁     (интегратор)
+//! y_p[k] = e[k] · τ₂ / τ₁               (пропорциональное звено)
+//! u[k]   = y_i[k] + y_p[k]
+//! ```
+//!
+//! где `Bₗ` — полоса петли (Hz), `ζ` — демпфирование, `T` — период
+//! интеграции (обычно 0.001 с для GPS L1 C/A).
 
 use crate::signal::correlator::discriminators::EplOutput;
 
@@ -502,5 +536,46 @@ mod tests {
             (ele_high - ele_low).abs() > 1.0,
             "ELE must scale with amplitude: {ele_low} vs {ele_high}"
         );
+    }
+
+    #[test]
+    fn test_config_default_is_valid() {
+        let cfg = DllConfig::default();
+
+        assert!(cfg.bandwidth_hz > 0.0);
+        assert!(cfg.damping > 0.0);
+        assert!(cfg.nominal_chip_rate_hz > 0.0);
+        assert!(cfg.chip_spacing_in_range());
+    }
+
+    #[test]
+    fn test_config_chip_spacing_range_accepts_0_1_to_1_0() {
+        // полный интервал = 2 * half_chip_spacing должен находиться в диапазоне [0.1, 1.0]
+        for half in [0.05, 0.1, 0.25, 0.5] {
+            let cfg = DllConfig {
+                half_chip_spacing: half,
+                ..DllConfig::default()
+            };
+
+            assert!(
+                cfg.chip_spacing_in_range(),
+                "half={half} should be in range"
+            );
+        }
+    }
+
+    #[test]
+    fn test_config_chip_spacing_range_rejects_out_of_bounds() {
+        let too_small = DllConfig {
+            half_chip_spacing: 0.01,
+            ..DllConfig::default()
+        };
+        let too_large = DllConfig {
+            half_chip_spacing: 0.9,
+            ..DllConfig::default()
+        };
+
+        assert!(!too_small.chip_spacing_in_range());
+        assert!(!too_large.chip_spacing_in_range());
     }
 }
