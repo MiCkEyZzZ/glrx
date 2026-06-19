@@ -327,7 +327,28 @@ impl Default for DllConfig {
 
 #[cfg(test)]
 mod tests {
+    use num_complex::Complex32;
+
     use super::*;
+
+    fn epl_balanced(amp: f32) -> EplOutput {
+        EplOutput {
+            early: Complex32::new(amp, 0.0),
+            prompt: Complex32::new(amp * 1.5, 0.0),
+            late: Complex32::new(amp, 0.0),
+        }
+    }
+
+    fn epl_with_el(
+        e: f32,
+        l: f32,
+    ) -> EplOutput {
+        EplOutput {
+            early: Complex32::new(e, 0.0),
+            prompt: Complex32::new(2.0, 0.0),
+            late: Complex32::new(l, 0.0),
+        }
+    }
 
     #[test]
     fn test_filter_coeffs_positive_for_typical_inputs() {
@@ -410,5 +431,76 @@ mod tests {
         let out_wide = wide.update(0.1).abs();
 
         assert!(out_wide > out_narrow, "wide={out_wide} narrow={out_narrow}");
+    }
+
+    #[test]
+    fn test_discriminate_nelp_zero_when_balanced() {
+        let epl = epl_balanced(1.0);
+        let err = discriminate(&epl, DllDiscriminatorKind::Nelp, 0.5);
+
+        assert!(err.abs() < 1e-6, "balanced E/L -> zero error, got {err}");
+    }
+
+    #[test]
+    fn test_discriminate_nelp_positive_when_early_stronger() {
+        let epl = epl_with_el(2.0, 1.0);
+        let err = discriminate(&epl, DllDiscriminatorKind::Nelp, 0.5);
+
+        assert!(err > 0.0, "early stronger → positive error");
+    }
+
+    #[test]
+    fn test_discriminate_nelp_negative_when_late_stronger() {
+        let epl = epl_with_el(1.0, 2.0);
+        let err = discriminate(&epl, DllDiscriminatorKind::Nelp, 0.5);
+
+        assert!(err < 0.0, "late stronger → negative error");
+    }
+
+    #[test]
+    fn test_discriminate_smaller_chip_spacing_amplifies_normalized_error() {
+        let epl = epl_with_el(2.0, 1.0);
+        let err_half = discriminate(&epl, DllDiscriminatorKind::Nelp, 0.5);
+        let err_quarter = discriminate(&epl, DllDiscriminatorKind::Nelp, 0.25);
+
+        assert!(
+            err_quarter.abs() > err_half.abs(),
+            "smaller spacing → larger normalized error: {err_half} vs {err_quarter}"
+        );
+    }
+
+    #[test]
+    fn test_discriminate_zero_chip_spacing_returns_zero() {
+        let epl = epl_with_el(2.0, 1.0);
+        let err = discriminate(&epl, DllDiscriminatorKind::Nelp, 0.0);
+
+        assert!(err.abs() < 1e-9, "zero spacing must not divide by zero");
+    }
+
+    #[test]
+    fn test_discriminate_ele_zero_when_balanced() {
+        let epl = epl_balanced(1.0);
+        let err = discriminate(&epl, DllDiscriminatorKind::Ele, 0.5);
+
+        assert!(err.abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_discriminate_nelp_is_amplitude_invariant_ele_is_not() {
+        let low = epl_with_el(1.0, 0.5);
+        let high = epl_with_el(10.0, 5.0); // same E/L ratio, x10 amplitude
+        let nelp_low = discriminate(&low, DllDiscriminatorKind::Nelp, 0.5);
+        let nelp_high = discriminate(&high, DllDiscriminatorKind::Nelp, 0.5);
+        let ele_low = discriminate(&low, DllDiscriminatorKind::Ele, 0.5);
+        let ele_high = discriminate(&high, DllDiscriminatorKind::Ele, 0.5);
+
+        assert!(
+            (nelp_low - nelp_high).abs() < 1e-5,
+            "NELP must be amplitude-invariant: {nelp_low} vs {nelp_high}"
+        );
+        assert!(
+            (ele_high - ele_low).abs() > 1.0,
+            "ELE must scale with amplitude: {ele_low} vs {ele_high}"
+        );
     }
 }
