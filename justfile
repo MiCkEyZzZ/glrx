@@ -162,9 +162,6 @@ miri:
 deny:
     cargo deny check
 
-audit:
-    cargo audit
-
 unused-deps:
     cargo machete
 
