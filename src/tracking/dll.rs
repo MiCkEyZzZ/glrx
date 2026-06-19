@@ -322,6 +322,12 @@ impl Dll {
             state: self.state,
         }
     }
+
+    /// Текущее состояние петли.
+    #[must_use]
+    pub const fn state(&self) -> DllState {
+        self.state
+    }
 }
 
 /// Вычисляет ошибку дискриминатора в **чипах**.
@@ -577,5 +583,35 @@ mod tests {
 
         assert!(!too_small.chip_spacing_in_range());
         assert!(!too_large.chip_spacing_in_range());
+    }
+
+    #[test]
+    fn test_dll_starts_unlocked_with_zero_epochs() {
+        let mut dll = Dll::with_defaults();
+        let out = dll.update(&epl_balanced(1.0));
+
+        assert_eq!(out.state, DllState::Locked);
+        assert_eq!(dll.state(), DllState::Locked);
+    }
+
+    #[test]
+    fn test_dll_update_transitions_to_locked() {
+        let mut dll = Dll::with_defaults();
+        let out = dll.update(&epl_balanced(1.0));
+
+        assert_eq!(out.state, DllState::Locked);
+        assert_eq!(dll.state(), DllState::Locked);
+    }
+
+    #[test]
+    fn test_dll_update_increments_epoch_counter() {
+        let mut dll = Dll::with_defaults();
+        let epl = epl_balanced(1.0);
+
+        for i in 1..=5 {
+            dll.update(&epl);
+
+            assert_eq!(dll.epochs, i);
+        }
     }
 }
