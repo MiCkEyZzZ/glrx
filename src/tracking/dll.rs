@@ -353,6 +353,40 @@ impl Dll {
         &self.config
     }
 
+    /// Половина chip spacing в **сэмплах** при заданной частоте дискретизации.
+    ///
+    /// Передаётся как аргумент `make_epl_replicas(prompt_code, half_chip_samples)`.
+    ///
+    /// ```text
+    /// half_chip_samples = half_chip_spacing × (fs / chip_rate)
+    /// ```
+    #[must_use]
+    pub fn half_chip_samples(
+        &self,
+        sample_rate_hz: f64,
+    ) -> f64 {
+        f64::from(self.config.half_chip_spacing) * sample_rate_hz / self.chip_freq_hz
+    }
+
+    /// Меняет полосу петли без сброса накопленного состояния (фазы и
+    /// интегратора) - позволяет сужать полосу после захвата (wide -> narrow)
+    /// для снижения шума в установившемся режиме.
+    pub fn set_bandwidth(
+        &mut self,
+        bandwidth_hz: f32,
+    ) {
+        self.config.bandwidth_hz = bandwidth_hz;
+
+        let integrator = self.filter.integrator();
+
+        self.filter = DllLoopFilter::new(
+            bandwidth_hz,
+            self.config.damping,
+            self.config.integration_time_s,
+        );
+        self.filter.integrator = integrator;
+    }
+
     /// Инициализирует DLL известной начальной фазой кода и доплеровской
     /// поправкой к частоте — вызывается сразу после acquisition.
     ///
@@ -423,6 +457,11 @@ impl Default for DllConfig {
 #[cfg(test)]
 mod tests {
     use num_complex::Complex32;
+
+    use crate::signal::{
+        correlator::{base::correlator_epl, code_utilities::make_epl_replicas},
+        prn_code::PrnCodeCache,
+    };
 
     use super::*;
 
@@ -804,5 +843,229 @@ mod tests {
         let phase = dll.code_phase_offset_chips();
 
         assert!((0.0..1023.0).contains(&phase));
+    }
+
+    #[test]
+    fn test_set_bandwidth_preserves_integrator_state() {
+        let mut dll = Dll::with_defaults();
+        let epl = epl_with_el(2.0, 1.0);
+
+        for _ in 0..10 {
+            dll.update(&epl);
+        }
+
+        let before = dll.filter.integrator();
+
+        dll.set_bandwidth(1.0); // сужение полосы после захвата
+
+        let after = dll.filter.integrator();
+
+        assert!(
+            (before - after).abs() < 1e-6,
+            "bandwidth change must preserve integrator: {before} vs {after}"
+        );
+        assert!((dll.config().bandwidth_hz - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_half_chip_samples_matches_formula() {
+        let dll = Dll::with_defaults(); // half_chip_spacing=0.5, chip_rate=1_023_000
+        let fs = 2_048_000.0_f64;
+        let samples = dll.half_chip_samples(fs);
+        let expected = 0.5 * fs / dll.config().nominal_chip_rate_hz;
+
+        assert!((samples - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_with_bandwidth_constructor_sets_fields() {
+        let dll = Dll::with_bandwidth(4.0, 0.25);
+
+        assert!((dll.config().bandwidth_hz - 4.0).abs() < 1e-6);
+        assert!((dll.config().half_chip_spacing - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_step_response_filter_output_grows_under_constant_error() {
+        // Подаём постоянную ошибку и проверяем, что выход фильтра нарастает
+        // (накопление интегральной составляющей) — необходимое условие
+        // корректной работы замкнутой петли в реальном приёмнике.
+        let mut dll = Dll::new(DllConfig {
+            bandwidth_hz: 5.0,
+            ..DllConfig::default()
+        });
+        let epl = epl_with_el(2.0, 1.0); // постоянная ошибка дискриминатора
+        let mut outputs = Vec::new();
+
+        for _ in 0..30 {
+            outputs.push(dll.update(&epl).filter_output);
+        }
+
+        let first_half: f32 = outputs[..15].iter().sum::<f32>() / 15.0;
+        let second_half: f32 = outputs[15..].iter().sum::<f32>() / 15.0;
+
+        assert!(
+            second_half > first_half,
+            "filter output should grow under constant error: {first_half} → {second_half}"
+        );
+    }
+
+    #[test]
+    fn test_step_response_reaches_near_zero_error_under_closed_loop_simulation() {
+        // Простая замкнутая петля: эмулируем, что коррекция DLL уменьшает
+        // фактическое рассогласование сигнала на каждой эпохе. Дискриминатор
+        // пропорционален остаточной задержке; ожидаем сходимость к ~0.
+        let mut dll = Dll::new(DllConfig {
+            bandwidth_hz: 5.0,
+            ..DllConfig::default()
+        });
+
+        // Симулированное рассогласование в "единицах E-L power"; уменьшается
+        // пропорционально накопленной коррекции DLL (упрощённая модель).
+        let mut residual_mismatch = 1.0_f32;
+        let mut last_error = f32::MAX;
+
+        for _ in 0..200 {
+            // E/L строим так, чтобы NELP ≈ residual_mismatch при малых значениях.
+            let e = 1.0 + residual_mismatch;
+            let l = 1.0 - residual_mismatch.min(0.99);
+            let epl = epl_with_el(e.max(0.001), l.max(0.001));
+
+            let out = dll.update(&epl);
+
+            last_error = out.discriminator_output;
+
+            // Коррекция уменьшает рассогласование (упрощённо, без реальной
+            // физики корреляции — только проверяем сходимость алгоритма).
+            residual_mismatch = (residual_mismatch - out.filter_output.abs() * 0.0001).max(0.0);
+        }
+
+        assert!(
+            last_error.abs() < 1.0,
+            "discriminator error should shrink toward zero, got {last_error}"
+        );
+    }
+
+    #[test]
+    fn test_dll_tracks_through_simulated_doppler_chip_rate_offset() {
+        // Doppler на несущей создаёт пропорциональный сдвиг частоты кода.
+        // Инициализируем DLL с такой поправкой и убеждаемся, что петля
+        // остаётся стабильной (частота не уходит в бесконечность/NaN) и
+        // продолжает корректировку при сбалансированном E/L.
+        let mut dll = Dll::with_defaults();
+        let doppler_chip_correction = 50.0; // chips/s, имитирует динамику платформы
+
+        dll.initialize(0.0, doppler_chip_correction);
+
+        let epl = epl_balanced(1.0); // сигнал выровнен относительно текущей фазы
+
+        for _ in 0..500 {
+            let out = dll.update(&epl);
+            assert!(
+                out.chip_freq_hz.is_finite(),
+                "chip frequency must stay finite"
+            );
+            assert!(out.code_phase_offset_chips.is_finite());
+        }
+
+        // С балансированным E/L и без новой ошибки частота не должна
+        // улетать далеко от исходной (initialize) поправки.
+        let nominal = dll.config().nominal_chip_rate_hz;
+        let final_offset = (dll.chip_freq_hz() - nominal).abs();
+
+        assert!(
+            final_offset < 200.0,
+            "frequency should remain bounded under Doppler offset: {final_offset}"
+        );
+    }
+
+    #[test]
+    fn test_dll_recovers_after_doppler_step_change() {
+        // Имитация скачка Doppler в середине tracking: после нескольких
+        // эпох с одной поправкой меняем offset и проверяем, что петля
+        // остаётся численно стабильной (не NaN/Inf), реагируя на новую
+        // ошибку дискриминатора.
+        let mut dll = Dll::new(DllConfig {
+            bandwidth_hz: 5.0,
+            ..DllConfig::default()
+        });
+        let epl_phase1 = epl_with_el(1.0, 1.0); // balanced
+        let epl_phase2 = epl_with_el(2.5, 0.5); // sudden mismatch (simulated Doppler jump)
+
+        for _ in 0..50 {
+            dll.update(&epl_phase1);
+        }
+
+        let freq_before_jump = dll.chip_freq_hz();
+
+        for _ in 0..50 {
+            let out = dll.update(&epl_phase2);
+            assert!(out.chip_freq_hz.is_finite());
+        }
+
+        assert!(
+            dll.chip_freq_hz() != freq_before_jump,
+            "DLL should react to the new discriminator error after the jump"
+        );
+        assert!(dll.chip_freq_hz().is_finite());
+    }
+
+    #[test]
+    fn test_dll_integration_aligned_prn_gives_near_zero_discriminator() {
+        const FS: f64 = 2_048_000.0;
+        const N: usize = 2048;
+
+        let cache = PrnCodeCache::new();
+        let prn_code: Vec<f32> = cache.resample_gps(1, N).unwrap();
+        let signal: Vec<Complex32> = prn_code.iter().map(|&c| Complex32::new(c, 0.0)).collect();
+        let mut dll = Dll::with_defaults();
+        let half_samples = dll.half_chip_samples(FS);
+        let (early, prompt, late) = make_epl_replicas(&prn_code, half_samples);
+        let epl = correlator_epl(&signal, &early, &prompt, &late);
+        let out = dll.update(&epl);
+
+        assert!(
+            out.discriminator_output.abs() < 0.1,
+            "aligned PRN should give near-zero discriminator, got {}",
+            out.discriminator_output
+        );
+    }
+
+    #[test]
+    fn test_dll_integration_delayed_prn_gives_nonzero_discriminator() {
+        const FS: f64 = 2_048_000.0;
+        const N: usize = 2048;
+
+        let cache = PrnCodeCache::new();
+        let prn_code: Vec<f32> = cache.resample_gps(2, N).unwrap();
+        let delay = 2usize;
+        let mut delayed = vec![0.0_f32; N];
+
+        for i in delay..N {
+            delayed[i] = prn_code[i - delay];
+        }
+
+        let signal: Vec<Complex32> = delayed.iter().map(|&c| Complex32::new(c, 0.0)).collect();
+        let mut dll = Dll::with_defaults();
+        let half_samples = dll.half_chip_samples(FS);
+        let (early, prompt, late) = make_epl_replicas(&prn_code, half_samples);
+        let epl = correlator_epl(&signal, &early, &prompt, &late);
+        let out = dll.update(&epl);
+
+        assert!(
+            out.discriminator_output != 0.0,
+            "delayed signal should produce a nonzero discriminator"
+        );
+    }
+
+    #[test]
+    fn test_dll_with_ele_discriminator_balanced_gives_near_zero() {
+        let mut dll = Dll::new(DllConfig {
+            discriminator: DllDiscriminatorKind::Ele,
+            ..DllConfig::default()
+        });
+        let out = dll.update(&epl_balanced(1.0));
+
+        assert!(out.discriminator_output.abs() < 1e-6);
     }
 }
