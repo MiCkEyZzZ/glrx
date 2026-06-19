@@ -1,4 +1,4 @@
-//! High-level receiver pipeline - оркестрация IQ -> Acquisition -> Tracking.
+//! High-level receiver pipeline — оркестрация IQ → Acquisition → Tracking.
 //!
 //! # State machine
 //!
@@ -18,9 +18,18 @@
 //! Fixed
 //! ```
 //!
+//! # Параллельный acquisition
+//!
+//! `run_acquisition_epoch` использует [`verify_all_parallel`] — все
+//! ещё не захваченные PRN проверяются **параллельно** через Rayon
+//! (или последовательно, если фича `rayon` отключена; сигнатура и
+//! поведение идентичны). Это реальный параллелизм по PRN, а не просто
+//! объявленная, но не вызываемая утилита.
+//!
 //! # Интеграция с acquisition
 //!
-//! `Receiver` использует [`AcquisitionVerifier`] передаётся через [`ReceiverEvent::SatelliteAcquired`] во внешний обработчик
+//! После успешной двойной верификации [`AcquisitionResult`] передаётся
+//! через [`ReceiverEvent::SatelliteAcquired`] во внешний обработчик
 //! (tracking-каналы, навигационный движок).
 //!
 //! # Пример
@@ -29,7 +38,7 @@
 //! use std::sync::Arc;
 //! use glrx::{
 //!     pipeline::receiver::{Receiver, ReceiverConfig},
-//!     rf::{config::RfConfig, file::FileSource, format::SampleFormat},
+//!     rf::{config::RfConfig, file::FileSource},
 //!     signal::prn_code::PrnCodeCache,
 //! };
 //!
@@ -38,8 +47,7 @@
 //! let cache = Arc::new(PrnCodeCache::new());
 //!
 //! let mut rx = Receiver::new(ReceiverConfig::default(), Box::new(source), &cache);
-//!
-//! rx.run_epoch(); // один цикл: читает блок, ищет спутникиЮ эмитирует события
+//! rx.run_epoch().unwrap(); // один цикл: читает блок, параллельно ищет спутники
 //! ```
 
 use std::{sync::Arc, time::Instant};
@@ -48,7 +56,7 @@ use num_complex::Complex32;
 
 use crate::{
     acquisition::verifier::{
-        AcquisitionResult, AcquisitionVerifier, VerifierConfig, VerifierStats,
+        verify_all_parallel, AcquisitionResult, AcquisitionVerifier, VerifierConfig, VerifierStats,
     },
     pipeline,
     rf::{error::RfError, iq_source::IqSource},
@@ -132,23 +140,30 @@ pub struct ReceiverConfig {
 /// Запись о захваченном спутнике.
 #[derive(Debug, Clone)]
 pub struct TrackedSatellite {
-    /// Верефицированный acquisition-результат
+    /// Верифицированный acquisition-результат.
     pub acquisition: AcquisitionResult,
 
-    /// Эпоха захвата (номер IQ-блока)
-    pub acuired_at_epoch: u64,
+    /// Эпоха захвата (номер IQ-блока).
+    pub acquired_at_epoch: u64,
 }
 
-/// Оркестратор pipeline: IQ-источник → acquisition → tracking.
+/// Оркестратор pipeline: IQ-источник → acquisition (параллельный по PRN) →
+/// tracking.
 ///
 /// На каждую эпоху (`run_epoch`):
 /// 1. Читает один IQ-блок из источника.
-/// 2. Если состояние `Acquiring` — запускает верификатор для всех PRN.
-/// 3. Новые подтверждённые спутники передаются через `dispatch_event`.
+/// 2. Если состояние `Acquiring` — параллельно (через Rayon, см.
+///    [`verify_all_parallel`]) проверяет все ещё не захваченные PRN.
+/// 3. Новые подтверждённые спутники передаются через события.
 /// 4. Обновляет состояние state machine.
 pub struct Receiver {
     config: ReceiverConfig,
     source: Box<dyn IqSource>,
+    /// Кэш PRN-кодов, общий для последовательных и параллельных вызовов.
+    cache: Arc<PrnCodeCache>,
+    /// Используется только как держатель агрегированной статистики и
+    /// конфигурации; параллельный путь обращается к `cache`/`config`
+    /// напрямую через свободную функцию `verify_all_parallel`.
     verifier: AcquisitionVerifier,
     state: ReceiverState,
     tracked: Vec<TrackedSatellite>,
@@ -175,30 +190,23 @@ pub struct AcquisitionSummary {
 
 impl Receiver {
     /// Создаёт ресивер.
-    ///
-    /// # Аргументы
-    ///
-    /// - `config` — конфигурация ресивера
-    /// - `source` — источник IQ-данных (файл, SDR, mock)
-    /// - `cache` — кэш PRN-кодов (разделяется через `Arc`)
     #[must_use]
     pub fn new(
         config: ReceiverConfig,
         source: Box<dyn IqSource>,
         cache: &Arc<PrnCodeCache>,
     ) -> Self {
-        let mut verifier = AcquisitionVerifier::new(
+        let verifier = AcquisitionVerifier::new(
             config.block_size,
             config.sample_rate_hz,
             config.verifier.clone(),
             Arc::clone(cache),
         );
 
-        verifier.precompute_all();
-
         Self {
             config,
             source,
+            cache: Arc::clone(cache),
             verifier,
             state: ReceiverState::ColdStart,
             tracked: Vec::new(),
@@ -209,9 +217,6 @@ impl Receiver {
     }
 
     /// Выполняет одну эпоху обработки.
-    ///
-    /// Читает один IQ-блок, выполняет acquisition (если нужно) и возвращает события.
-    /// Вызывающий код должен передать события в tracking-каналы.
     ///
     /// # Errors
     ///
@@ -298,7 +303,6 @@ impl Receiver {
     ) -> Vec<ReceiverEvent> {
         let t0 = Instant::now();
         let mut events = Vec::new();
-        let mut newly_confirmed = 0usize;
 
         // Ищем только PRN, которые ещё не захвачены
         let already_tracked: Vec<u8> = self.tracked.iter().map(|s| s.acquisition.prn).collect();
@@ -311,29 +315,40 @@ impl Receiver {
             .collect();
         let prns_searched = prns_to_search.len();
 
-        for prn in prns_to_search {
-            let verdict = self.verifier.verify_prn(signal, prn);
+        // Реальный параллельный путь: один вызов на весь список PRN,
+        // внутри — par_iter() по Rayon (см. acquisition::verifier).
+        let parallel_output = verify_all_parallel(
+            signal,
+            self.config.block_size,
+            self.config.sample_rate_hz,
+            &prns_to_search,
+            &self.config.verifier,
+            &self.cache,
+        );
 
-            if let Some(result) = verdict.acquisition_result() {
-                log::info!(
-                    "PRN {} acquired: doppler={:.0} Hz, \
-                     code_phase={} samples, C/N₀={:.1} dBHz",
-                    result.prn,
-                    result.doppler_hz,
-                    result.code_phase_samples,
-                    result.cn0_db_hz,
-                );
+        // Сливаем статистику параллельного прогона в общий счётчик ресивера,
+        // чтобы acquisition_stats() отражал и параллельные эпохи.
+        self.verifier.absorb_stats(&parallel_output.stats);
 
-                self.tracked.push(TrackedSatellite {
-                    acquisition: result.clone(),
-                    acuired_at_epoch: epoch,
-                });
+        let mut newly_confirmed = 0usize;
 
-                events.push(ReceiverEvent::SatelliteAcquired { result });
-                newly_confirmed += 1;
+        for result in parallel_output.results {
+            log::info!(
+                "PRN {} acquired: doppler={:.0} Hz, code_phase={} samples, C/N₀={:.1} dBHz",
+                result.prn,
+                result.doppler_hz,
+                result.code_phase_samples,
+                result.cn0_db_hz,
+            );
 
-                self.acq_confirmed_total += 1;
-            }
+            self.tracked.push(TrackedSatellite {
+                acquisition: result.clone(),
+                acquired_at_epoch: epoch,
+            });
+
+            events.push(ReceiverEvent::SatelliteAcquired { result });
+            newly_confirmed += 1;
+            self.acq_confirmed_total += 1;
         }
 
         self.acq_epochs += 1;
@@ -395,7 +410,7 @@ mod tests {
         signal::prn_code::PrnCodeCache,
     };
 
-    // ── Mock IQ source ────────────────────────────────────────────────────────
+    //  Mock IQ source
 
     /// Источник который выдаёт заранее подготовленные блоки по одному.
     struct VecSource {

@@ -95,7 +95,7 @@ pub struct MockSdrSource {
 /// ```no_run
 /// # #[cfg(feature = "sdr")]
 /// # {
-/// use glrx::rf::{sdr::SoapySource, RfConfig};
+/// use glrx::rf::{sdr::SoapySource, config::RfConfig};
 ///
 /// let config = RfConfig::default(); // GPS L1, 2.048 Msps
 /// let src = SoapySource::open("driver=rtlsdr", config).unwrap();

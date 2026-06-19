@@ -15,10 +15,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - в ф-ии `single_verify()` исправил сравнение при получении `doppler_ok` с `doppler_fine_hz`
     на `doppler_coarse_hz`. Потому что второй проход строится вокруг: `doppler_coarse_hz`,
     а не `doppler_fine_hz`. Именно coarse является центром narrow-search.
-
 - **pipeline**
   - Добавлена базовая реализация `receiver.rs`
-
 - **acquisition (FFT-based signal search)**:
   - реализован PCPS (Parallel Code Phase Search) алгоритм на основе FFT
   - добавлена частотная сетка Doppler search: ±10 kHz с шагом 500 Hz
@@ -27,7 +25,6 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - реализован полный поиск по всем 32 GPS PRN за один проход
   - добавлена процедура fine frequency estimation после грубого Doppler поиска
   - добавлены benchmark-метрики времени поиска (single PRN / full 32 PRN scan)
-
 - **acquisition module integration**:
   - добавлены модули `fft_search.rs`, `detector.rs`, `mod.rs`
   - интегрирован FFT-based cross-correlation pipeline в acquisition layer
@@ -40,6 +37,36 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - добавлены небольшие правки по коду в acquisition модуль вызванные Clippy линтером
   - улучшена документацию в `DSP.md`, `NAVIGATION.md`, `PIPELINE.md`, `TRACKING.md`
   - обновлён README.md файл добавлена схема архитектуры
+- **acquisition**
+  - Параллельный поиск — теперь реально подключён. Раньше: `parallel_search`
+    существовала как функция рядом с кодом, но `Receiver::run_acquisition_epoch`
+    гонял PRN в обычном `for-цикле` через `self.verifier.verify_prn(...)`.
+    Теперь Логика двойной верификации вынесена в чистую функцию `verify_prn_pure(signal,
+prn, block_size, sample_rate_hz, config, cache)` — без `&mut self`, без побочных
+    эффектов, безопасна для вызова из разных потоков Rayon одновременно.
+    `verify_all_parallel()` — публичная функция, гоняет `verify_prn_pure` через
+    `prns.par_iter().map(...) (за #[cfg(feature = "rayon")]`, с идентичным
+    `sequential fallback` без фичи).
+    `Receiver::run_acquisition_epoch` теперь вызывает именно её (строка с
+    `let parallel_output = verify_all_parallel(...))`, а не последовательный цикл.
+    Добавлен тест `acquisition_epoch_searches_all_32_prns`, который проверяет, что
+    за одну эпоху реально проверяются все 32 PRN одним параллельным вызовом.
+  - Метрика false positive — переименована и задокументирована честно
+    - `false_alarm_rate()` помечена `#[deprecated]` с явным объяснением, почему
+      имя было обманчивым: у нас нет ground truth о том, был ли спутник реально
+      в небе. Новый метод marginal_rate() — то же вычисление
+      (marginal / (confirmed + marginal)), но названо в соответствии с тем, что
+      оно на самом деле измеряет: долю случаев, когда широкий проход дал пик, а
+      узкий уточняющий не подтвердил.
+    - Старый метод оставлен как алиас для обратной совместимости, но с предупреждением
+      компилятора при использовании.
+  - Добавлено для связности:
+    - `VerifierStats::merge()` — объединение статистики (нужно для агрегации
+      параллельного прогона в общий счётчик `Receiver`)
+    - `AcquisitionVerifier::absorb_stats()` — `Receiver` теперь вызывает это после
+      каждой параллельной эпохи, поэтому acquisition_stats().verifier_stats.
+      `total_calls` реально показывает 32 после первой эпохи, а не 0 (это покрыто
+      тестом `acquisition_summary_reflects_parallel_stats`)
 
 ## [0.1.0] - 2026-05-31
 
