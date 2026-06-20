@@ -92,7 +92,7 @@ pub struct DllOutput {
 /// по стандартным формулам двухпольного PI-фильтра.
 #[derive(Debug, Clone, Copy)]
 pub struct DllFilterCoeffs {
-    /// Постоянная времени интегратора τ₁ (с)
+    /// Постоянная времени интегратора τ₁ (с²)
     pub tau1: f32,
 
     /// Постоянная времени пропорционального звена τ₂ (с)
@@ -120,13 +120,19 @@ pub struct DllLoopFilter {
 /// Конфигурация DLL.
 #[derive(Debug, Clone)]
 pub struct DllConfig {
-    /// Шумовая полоса петли (Гц). Типично 1-5 Гц: уже - меньше шума и медленнее реакция на динамику, шире - наоборот
+    /// Шумовая полоса петли (Гц). Типично 1-5 Гц: уже - меньше шума и
+    /// медленнее реакция на динамику, шире - наоборот
     pub bandwidth_hz: f32,
 
     /// Коэффициент демпфирования. `0.707` - критическое демпфирование
     pub damping: f32,
 
-    /// Половина межкорреляторного расстояния (chip spacing), в чипах
+    /// Половина межкорреляторного расстояния (chip spacing), в чипах.
+    ///
+    /// Early и Late реплики смещены на ±`half_chip_spacing` от Prompt.
+    /// Допустимый диапазон по issue: **0.1–1.0 чипа** (здесь хранится
+    /// именно половина расстояния, т.е. полное расстояние E↔L =
+    /// `2 × half_chip_spacing` укладывается в 0.2–2.0 чипа).
     pub half_chip_spacing: f32,
 
     /// Тип дискриминатора
@@ -138,7 +144,8 @@ pub struct DllConfig {
     /// Номинальная частота кода (chips/s). Для GPS L1 C/A - 023 000
     pub nominal_chip_rate_hz: f64,
 
-    /// Ограничение выхода фильтра (chips/s) - защита от насыщения при аномальных входах (например, во время потери lock)
+    /// Ограничение выхода фильтра (chips/s) - защита от насыщения при
+    /// аномальных входах (например, во время потери lock)
     pub output_clamp_chips_s: f32,
 }
 
@@ -167,6 +174,9 @@ pub struct Dll {
 impl DllConfig {
     /// Проверяет, что `half_chip_spacing` укладывается в допустимый диапазон полного chip
     /// spacing 0.1-1.0 чипа.
+    ///
+    /// Полное расстояние Early ↔ Late равно `2 × half_chip_spacing`, поэтому
+    /// допустимый диапазон для `half_chip_spacing` — `0.05..=0.5`.
     #[must_use]
     pub fn chip_spacing_in_range(&self) -> bool {
         let full_spacing = 2.0 * self.half_chip_spacing;
@@ -177,6 +187,11 @@ impl DllConfig {
 
 impl DllFilterCoeffs {
     /// Вычисляет коэффициенты из полосы петли и демпфирования.
+    ///
+    /// # Аргументы
+    ///
+    /// * `bandwidth_hz` — шумовая полоса петли, типично 1–5 Hz
+    /// * `damping` — коэффициент демпфирования; `0.707` (1/√2) — критическое
     ///
     /// # Panics
     ///
@@ -223,7 +238,7 @@ impl DllLoopFilter {
         let tau1 = self.coeffs.tau1;
         let tau2 = self.coeffs.tau2;
 
-        self.integrator += error_chips * t * tau1;
+        self.integrator += error_chips * t / tau1;
 
         let proportional = error_chips * tau2 / tau1;
 
@@ -239,6 +254,12 @@ impl DllLoopFilter {
     #[must_use]
     pub const fn integrator(&self) -> f32 {
         self.integrator
+    }
+
+    /// Коэффициент фильтра.
+    #[must_use]
+    pub const fn coeffs(&self) -> DllFilterCoeffs {
+        self.coeffs
     }
 }
 
@@ -420,6 +441,19 @@ impl Dll {
 }
 
 /// Вычисляет ошибку дискриминатора в **чипах**.
+///
+/// # Аргументы
+///
+/// - `epl` - результат EPL-коррелятора текущей эпохи
+/// - `kind` - выбранный тип дискриминатора
+/// - `half_chip_spacing` - половина межкоррелятора расстояния (чипы),
+///   например 0.5 для классического ±0.5-chip spacing
+///
+/// # Возвращает
+///
+/// Ошибку фазы кода в чипах. Положительное значение означает, что
+/// локальный (опорный) код **запаздывает** относительно принятого сигнала
+/// (Early сильнее Late).
 #[must_use]
 #[inline]
 pub fn discriminate(
@@ -1064,5 +1098,50 @@ mod tests {
         let out = dll.update(&epl_balanced(1.0));
 
         assert!(out.discriminator_output.abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_loop_filter_matches_pi_equations_exactly() {
+        let mut f = DllLoopFilter::new(2.0, 0.707, 0.001);
+
+        let error = 0.1_f32;
+
+        let tau1 = f.coeffs().tau1;
+        let tau2 = f.coeffs().tau2;
+        let t = 0.001_f32;
+
+        let out = f.update(error);
+
+        let expected_integrator = error * t / tau1;
+        let expected_proportional = error * tau2 / tau1;
+        let expected_output = expected_integrator + expected_proportional;
+
+        assert!(
+            (f.integrator() - expected_integrator).abs() < 1e-6,
+            "integrator mismatch: expected={}, got={}",
+            expected_integrator,
+            f.integrator()
+        );
+
+        assert!(
+            (out - expected_output).abs() < 1e-6,
+            "output mismatch: expected={expected_output}, got={out}",
+        );
+    }
+
+    #[test]
+    fn test_dll_initialize_wraps_negative_phase() {
+        let mut dll = Dll::with_defaults();
+
+        dll.initialize(-10.0, 0.0);
+
+        let phase = dll.code_phase_offset_chips();
+
+        assert!(
+            (0.0..1023.0).contains(&phase),
+            "phase should be wrapped into [0,1023), got {phase}"
+        );
+
+        assert!((phase - 1013.0).abs() < 1e-9);
     }
 }
