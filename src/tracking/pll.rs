@@ -270,6 +270,12 @@ impl CoherentAccumulator {
             None
         }
     }
+
+    /// Сбрасывает накопленную сумму без изменения настройки периода.
+    pub fn reset(&mut self) {
+        self.sum = Complex32::default();
+        self.count = 0;
+    }
 }
 
 impl PllFilterCoeffs {
@@ -595,6 +601,7 @@ impl Pll {
 /// где `T` - период между накоплениями (с). Результат - оценка частотной
 /// ошибки в Гц, не зависящая от знака навигационного бита (произведение
 /// двух последовательных Prompt устраняет 180°-скачки).
+#[must_use]
 pub fn fll_cross_product_discriminator(
     prev: Complex32,
     curr: Complex32,
@@ -647,5 +654,74 @@ mod tests {
         for _ in 0..4 {
             assert!(acc.push(Complex32::new(1.0, 0.0)).is_none());
         }
+    }
+
+    #[test]
+    fn test_accumulator_returns_sum_at_target() {
+        let mut acc = CoherentAccumulator::new(4);
+
+        for _ in 0..3 {
+            let _ = acc.push(Complex32::new(1.0, 0.0));
+        }
+
+        let result = acc.push(Complex32::new(1.0, 0.0));
+
+        assert!(result.is_some());
+
+        let sum = result.unwrap();
+
+        assert!((sum.re - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_accumulator_resets_after_emitting() {
+        let mut acc = CoherentAccumulator::new(2);
+
+        let _ = acc.push(Complex32::new(1.0, 0.0));
+
+        let first = acc.push(Complex32::new(1.0, 0.0)).unwrap();
+
+        assert!((first.re - 2.0).abs() < 1e-6);
+
+        // Следующий цикл начинается с нуля.
+        assert!(acc.push(Complex32::new(3.0, 0.0)).is_none());
+
+        let second = acc.push(Complex32::new(3.0, 0.0)).unwrap();
+
+        assert!((second.re - 6.0).abs() < 1e-6);
+    }
+
+    #[test]
+    #[should_panic(expected = "1-20 ms")]
+    fn test_accumulator_rejects_zero_integration() {
+        let _ = CoherentAccumulator::new(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "1-20 ms")]
+    fn test_accumulator_rejects_over_20ms() {
+        let _ = CoherentAccumulator::new(21);
+    }
+
+    #[test]
+    fn test_accumulator_accepts_full_issue_range() {
+        for ms in [1usize, 10, 20] {
+            let _ = CoherentAccumulator::new(ms);
+        }
+    }
+
+    #[test]
+    fn test_accumulator_reset_clears_partial_sum() {
+        let mut acc = CoherentAccumulator::new(10);
+
+        let _ = acc.push(Complex32::new(5.0, 0.0));
+
+        acc.reset();
+
+        // После сброса должно требоваться полных 10 эпох заново.
+        for _ in 0..9 {
+            assert!(acc.push(Complex32::new(1.0, 0.0)).is_none());
+        }
+        assert!(acc.push(Complex32::new(1.0, 0.0)).is_some());
     }
 }
