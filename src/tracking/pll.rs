@@ -724,4 +724,47 @@ mod tests {
         }
         assert!(acc.push(Complex32::new(1.0, 0.0)).is_some());
     }
+
+    #[test]
+    fn test_fll_discriminator_zero_for_identical_consecutive_prompts() {
+        let p = Complex32::new(1.0, 0.0);
+        let err = fll_cross_product_discriminator(p, p, 0.001);
+
+        assert!(err.abs() < 1e-6, "identical prompts → zero frequency error");
+    }
+
+    #[test]
+    fn test_fll_discriminator_nonzero_for_rotating_phase() {
+        // Симулируем частотную ошибку: фаза поворачивается между эпохами.
+        let prev = Complex32::new(1.0, 0.0);
+        let angle = 0.1_f32; // small phase rotation
+        let curr = Complex32::new(angle.cos(), angle.sin());
+        let err = fll_cross_product_discriminator(prev, curr, 0.001);
+
+        assert!(
+            err.abs() > 0.0,
+            "rotating phase should produce nonzero freq error"
+        );
+    }
+
+    #[test]
+    fn test_fll_discriminator_sign_matches_rotation_direction() {
+        let prev = Complex32::new(1.0, 0.0);
+        let pos_rot = Complex32::new(0.1_f32.cos(), 0.1_f32.sin());
+        let neg_rot = Complex32::new(0.1_f32.cos(), -0.1_f32.sin());
+
+        let err_pos = fll_cross_product_discriminator(prev, pos_rot, 0.001);
+        let err_neg = fll_cross_product_discriminator(prev, neg_rot, 0.001);
+
+        assert!(err_pos > 0.0);
+        assert!(err_neg < 0.0);
+    }
+
+    #[test]
+    fn test_fll_discriminator_zero_period_returns_zero() {
+        let p1 = Complex32::new(1.0, 0.0);
+        let p2 = Complex32::new(0.0, 1.0);
+
+        assert_eq!(fll_cross_product_discriminator(p1, p2, 0.0), 0.0);
+    }
 }
