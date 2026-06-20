@@ -5,6 +5,25 @@ All notable changes to **GLRX** are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 00-00-0000
+
+### Added
+
+- Добавлен DLL (`dll.rs`) для отслеживания фазы PRN-кода.
+- Добавлен выбор типа дискриминатора через `DllDiscriminatorKind`:
+  - `Nelp` использует `EplOutput::dll_nelp()`
+  - `Ele` использует `EplOutput::dll_ele()`
+- Добавлена нормализация выхода дискриминатора в чипы через `discriminate()` с
+  делением на `2 × half_chip_spacing`.
+- Добавлен петлевой фильтр второго порядка (`DllLoopFilter`) с расчётом `tau1` и
+  `tau2` по формулам из `docs/TRACKING.md`.
+- Добавлены интеграционные тесты с реальным PRN-кодом через `correlator_epl` и `make_epl_replicas`.
+
+### Fixed
+
+- Исправлена формула обновления интегратора в DLL: `e · T / τ₁` вместо `e · T · τ₁`.
+- Приведены комментарии и тесты петлевого фильтра в соответствие с формулами трекинга.
+
 ## [0.2.0] - 2026-06-19
 
 ### Added
