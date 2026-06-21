@@ -951,4 +951,74 @@ mod tests {
             assert!(out.is_finite());
         }
     }
+
+    #[test]
+    fn test_lock_detector_not_lost_with_few_samples() {
+        let mut d = LockDetector::new(LockDetectorConfig::default());
+
+        for _ in 0..5 {
+            d.push_phase_error(2.0); // huge error, but below min_samples
+        }
+
+        assert!(
+            !d.is_lost(),
+            "should not trigger before min_samples reached"
+        );
+    }
+
+    #[test]
+    fn test_lock_detector_triggers_on_high_phase_variance() {
+        let cfg = LockDetectorConfig {
+            window_size: 20,
+            phase_std_threshold_rad: 0.3,
+            min_samples: 5,
+            ..LockDetectorConfig::default()
+        };
+        let mut d = LockDetector::new(cfg);
+
+        for i in 0..20 {
+            // Чередование больших ошибок → высокая дисперсия
+            let v = if i % 2 == 0 { 1.0 } else { -1.0 };
+
+            d.push_phase_error(v);
+        }
+
+        assert!(
+            d.is_lost(),
+            "high variance phase errors should trigger lock loss"
+        );
+    }
+
+    #[test]
+    fn test_lock_detector_stable_for_small_phase_errors() {
+        let cfg = LockDetectorConfig {
+            window_size: 20,
+            phase_std_threshold_rad: 0.3,
+            min_samples: 5,
+            ..LockDetectorConfig::default()
+        };
+        let mut d = LockDetector::new(cfg);
+
+        for _ in 0..20 {
+            d.push_phase_error(0.01);
+        }
+
+        assert!(
+            !d.is_lost(),
+            "small consistent errors should not trigger lock loss"
+        );
+    }
+
+    #[test]
+    fn test_lock_detector_reset_clears_history() {
+        let mut d = LockDetector::new(LockDetectorConfig::default());
+
+        for _ in 0..20 {
+            d.push_phase_error(5.0);
+        }
+
+        d.reset();
+
+        assert_eq!(d.current_phase_std_rad(), 0.0);
+    }
 }
