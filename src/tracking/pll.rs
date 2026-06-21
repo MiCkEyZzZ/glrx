@@ -1304,4 +1304,20 @@ mod tests {
             assert!(out.carrier_phase_rad.is_finite());
         }
     }
+
+    #[test]
+    fn test_pll_integration_with_correlator_epl_prompt() {
+        use crate::signal::correlator::base::correlator_epl;
+
+        let n = 64;
+        let code = vec![1.0_f32; n];
+        let signal = vec![Complex32::new(1.0, 0.0); n];
+        let epl = correlator_epl(&signal, &code, &code, &code);
+
+        let mut pll = make_pll();
+        let out = pll.update(epl.prompt);
+
+        assert!(out.coherent_epoch_completed);
+        assert!(out.carrier_freq_hz.is_finite());
+    }
 }
