@@ -241,6 +241,21 @@ impl FllLoopFilter {
     pub fn integrator(&self) -> f32 {
         self.integrator
     }
+
+    /// Принудительно устанавливает значение интегратора - используется при
+    /// смене полосы (wide -> narrow), чтобы не было скачка выходной поправки.
+    pub fn set_integrator(
+        &mut self,
+        value: f32,
+    ) {
+        self.integrator = value
+    }
+
+    /// Коэффициент фильтра.
+    #[must_use]
+    pub const fn coeffs(&self) -> FllFilterCoeffs {
+        self.coeffs
+    }
 }
 
 /// Cross-product дискриминатор частоты.
@@ -388,5 +403,24 @@ mod tests {
         f.reset();
 
         assert!(f.integrator().abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_loop_filter_set_integrator_overrides_value() {
+        let mut f = FllLoopFilter::new(150.0, 0.001);
+
+        f.set_integrator(42.0);
+
+        assert!((f.integrator() - 42.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_loop_filter_wider_bandwidth_reacts_faster() {
+        let mut narrow = FllLoopFilter::new(20.0, 0.001);
+        let mut wide = FllLoopFilter::new(150.0, 0.001);
+        let out_narrow = narrow.update(100.0).abs();
+        let out_wide = wide.update(100.0).abs();
+
+        assert!(out_wide > out_narrow);
     }
 }
