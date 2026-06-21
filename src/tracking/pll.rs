@@ -1284,4 +1284,24 @@ mod tests {
 
         assert_eq!(completions, 3);
     }
+
+    #[test]
+    fn test_pll_initial_doppler_is_reflected_in_carrier_freq() {
+        let pll = Pll::with_defaults(3500.0);
+
+        assert!((pll.carrier_freq_hz() - 3500.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_pll_remains_numerically_stable_over_many_epochs() {
+        let mut pll = make_pll();
+        let prompt = Complex32::new(1.0, 0.05); // slight constant phase offset
+
+        for _ in 0..5000 {
+            let out = pll.update(prompt);
+
+            assert!(out.carrier_freq_hz.is_finite());
+            assert!(out.carrier_phase_rad.is_finite());
+        }
+    }
 }
