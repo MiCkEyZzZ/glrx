@@ -173,15 +173,24 @@ pub struct FllOutput {
 /// ```
 #[derive(Debug, Clone)]
 pub struct Fll {
-    config: FllConfig,
-    filter: FllLoopFilter,
-    freq_hz: f64,
-    state: FllState,
-    prev_prompt: Option<Complex32>,
-    stable_count: usize,
-    narrowed: bool,
-    ready_for_pll: bool,
-    total_epochs: u64,
+    /// Some
+    pub config: FllConfig,
+    /// Some
+    pub filter: FllLoopFilter,
+    /// Some
+    pub freq_hz: f64,
+    /// Some
+    pub state: FllState,
+    /// Some
+    pub prev_prompt: Option<Complex32>,
+    /// Some
+    pub stable_count: usize,
+    /// Some
+    pub narrowed: bool,
+    /// Some
+    pub ready_for_pll: bool,
+    /// Some
+    pub total_epochs: u64,
 }
 
 impl FllFilterCoeffs {
@@ -346,7 +355,7 @@ mod tests {
 
     use super::*;
 
-    fn prompt_at_freq(
+    fn _prompt_at_freq(
         freq_hz: f64,
         sample_idx: u64,
         period_s: f64,
