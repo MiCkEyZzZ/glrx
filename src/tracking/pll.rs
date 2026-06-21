@@ -905,4 +905,50 @@ mod tests {
     fn filter_coeffs_zero_bandwidth_panics() {
         let _ = PllFilterCoeffs::new(0.0);
     }
+
+    #[test]
+    fn test_loop_filter_zero_error_eventually_zero_output() {
+        let mut f = PllLoopFilter::new(18.0, 0.001);
+        let out = f.update(0.0);
+
+        assert!(out.abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_loop_filter_positive_error_positive_output() {
+        let mut f = PllLoopFilter::new(18.0, 0.001);
+
+        assert!(f.update(0.1) > 0.0);
+    }
+
+    #[test]
+    fn test_loop_filter_negative_error_negative_output() {
+        let mut f = PllLoopFilter::new(18.0, 0.001);
+
+        assert!(f.update(-0.1) < 0.0);
+    }
+
+    #[test]
+    fn test_loop_filter_reset_clears_integrators() {
+        let mut f = PllLoopFilter::new(18.0, 0.001);
+
+        for _ in 0..10 {
+            let _ = f.update(0.1);
+        }
+
+        f.reset();
+
+        assert!(f.freq_integrator().abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_loop_filter_handles_constant_error_without_diverging_to_nan() {
+        let mut f = PllLoopFilter::new(18.0, 0.001);
+
+        for _ in 0..10_000 {
+            let out = f.update(0.05);
+
+            assert!(out.is_finite());
+        }
+    }
 }
