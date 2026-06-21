@@ -1181,4 +1181,44 @@ mod tests {
         assert!(out_pos.discriminator_output.abs() < 0.2);
         assert!(out_neg.discriminator_output.abs() < 0.2);
     }
+
+    #[test]
+    fn test_pll_detects_loss_of_lock_under_erratic_phase() {
+        let cfg = PllConfig {
+            fll_to_pll_stable_epochs: 1,
+            fll_stable_threshold_hz: 1000.0,
+            lock_detector: LockDetectorConfig {
+                window_size: 10,
+                phase_std_threshold_rad: 0.2,
+                min_samples: 5,
+                cn0_threshold_db_hz: -1000.0, // отключаем CN0-критерий для теста
+            },
+            ..PllConfig::default()
+        };
+        let mut pll = Pll::new(cfg, 0.0);
+
+        // Захватываем lock на стабильном сигнале.
+        let stable = Complex32::new(1.0, 0.0);
+
+        for _ in 0..5 {
+            pll.update(stable);
+        }
+
+        assert_eq!(pll.state(), PllState::PllLock);
+
+        // Подаём хаотично меняющуюся фазу — должны зафиксировать потерю lock.
+        let mut lost = false;
+
+        for i in 0..30 {
+            let angle = if i % 2 == 0 { 1.2_f32 } else { -1.2_f32 };
+            let erratic = Complex32::new(angle.cos(), angle.sin());
+            let out = pll.update(erratic);
+            if out.state == PllState::LockLost {
+                lost = true;
+                break;
+            }
+        }
+
+        assert!(lost, "erratic phase should eventually trigger LockLost");
+    }
 }
