@@ -1221,4 +1221,20 @@ mod tests {
 
         assert!(lost, "erratic phase should eventually trigger LockLost");
     }
+
+    #[test]
+    fn test_pll_reset_returns_to_searching_with_new_doppler() {
+        let mut pll = make_pll();
+
+        for _ in 0..10 {
+            pll.update(Complex32::new(1.0, 0.0));
+        }
+
+        pll.reset(1500.0);
+
+        assert_eq!(pll.state(), PllState::Searching);
+        assert_eq!(pll.total_epochs(), 0);
+        assert!((pll.carrier_freq_hz() - 1500.0).abs() < 1e-9);
+        assert!(pll.carrier_phase_rad().abs() < 1e-9);
+    }
 }
