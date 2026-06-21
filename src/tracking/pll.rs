@@ -1237,4 +1237,51 @@ mod tests {
         assert!((pll.carrier_freq_hz() - 1500.0).abs() < 1e-9);
         assert!(pll.carrier_phase_rad().abs() < 1e-9);
     }
+
+    #[test]
+    fn test_pll_with_20ms_integration_completes_every_20_epochs() {
+        let mut pll = Pll::new(
+            PllConfig {
+                integration_ms: 20,
+                ..PllConfig::default()
+            },
+            0.0,
+        );
+
+        let prompt = Complex32::new(1.0, 0.0);
+        let mut completions = 0;
+
+        for _ in 0..40 {
+            if pll.update(prompt).coherent_epoch_completed {
+                completions += 1;
+            }
+        }
+
+        assert_eq!(
+            completions, 2,
+            "20ms integration over 40 epochs → 2 completions"
+        );
+    }
+
+    #[test]
+    fn test_pll_with_10ms_integration_completes_every_10_epochs() {
+        let mut pll = Pll::new(
+            PllConfig {
+                integration_ms: 10,
+                ..PllConfig::default()
+            },
+            0.0,
+        );
+
+        let prompt = Complex32::new(1.0, 0.0);
+        let mut completions = 0;
+
+        for _ in 0..30 {
+            if pll.update(prompt).coherent_epoch_completed {
+                completions += 1;
+            }
+        }
+
+        assert_eq!(completions, 3);
+    }
 }
