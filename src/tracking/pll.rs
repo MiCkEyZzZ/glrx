@@ -249,11 +249,15 @@ pub struct Pll {
     total_epochs: u64,
     /// Эпоха (номер 1-мс такта), на которой был зафиксирован переход в
     /// `PllLock` - для вычисления `time_to_lock_ms`
-    pll_locked_at_epoch: Option<u64>,
+    locked_at_epoch: Option<u64>,
 }
 
 impl CoherentAccumulator {
     /// Создаёт накопитель на `integration_ms` миллисекунд (1 эпоха = 1 мс).
+    ///
+    /// # Panics
+    ///
+    /// Паникует если `integration_ms` вне диапазона `1..=20`.
     #[must_use]
     pub fn new(integration_ms: usize) -> Self {
         assert!(
@@ -293,6 +297,7 @@ impl CoherentAccumulator {
     }
 
     /// Настроенный период накопления (мс).
+    #[must_use]
     pub const fn integration_ms(&self) -> usize {
         self.traget_epochs
     }
@@ -306,6 +311,10 @@ impl CoherentAccumulator {
 
 impl PllFilterCoeffs {
     /// Вычисляет коэффициент из шумовой полосы петли.
+    ///
+    /// # Panics
+    ///
+    /// Паникует если `bandwidth_hz <= 0.0`.
     #[must_use]
     pub fn new(bandwidth_hz: f32) -> Self {
         assert!(bandwidth_hz > 0.0, "bandwidth must be positive");
@@ -351,7 +360,7 @@ impl PllLoopFilter {
     }
 
     /// Сбрасывает оба интегратора.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.acc1 = 0.0;
         self.acc2 = 0.0;
     }
@@ -486,7 +495,7 @@ impl Pll {
             fll_prev_prompt: None,
             fll_stable_count: 0,
             total_epochs: 0,
-            pll_locked_at_epoch: None,
+            locked_at_epoch: None,
         }
     }
 
@@ -606,7 +615,7 @@ impl Pll {
 
         if self.state != PllState::PllLock {
             self.state = PllState::PllLock;
-            self.pll_locked_at_epoch = Some(self.total_epochs);
+            self.locked_at_epoch = Some(self.total_epochs);
         }
 
         let filter_output = self.filter.update(phase_error_rad);
@@ -627,7 +636,7 @@ impl Pll {
         self.filter.acc1 = preserved_freq_integrator;
 
         self.state = PllState::PllLock;
-        self.pll_locked_at_epoch = Some(self.total_epochs);
+        self.locked_at_epoch = Some(self.total_epochs);
         self.fll_prev_prompt = None;
     }
 
@@ -667,7 +676,7 @@ impl Pll {
     #[must_use]
     pub fn benchmark_metrics(&self) -> PllBenchmarkMetrics {
         let time_to_lock_ms = self
-            .pll_locked_at_epoch
+            .locked_at_epoch
             .map(|epoch| epoch as f64 * 1.0 /* 1 ms per raw epoch */);
 
         PllBenchmarkMetrics {
@@ -696,7 +705,7 @@ impl Pll {
         self.fll_prev_prompt = None;
         self.fll_stable_count = 0;
         self.total_epochs = 0;
-        self.pll_locked_at_epoch = None;
+        self.locked_at_epoch = None;
     }
 }
 
@@ -882,7 +891,7 @@ mod tests {
         let p1 = Complex32::new(1.0, 0.0);
         let p2 = Complex32::new(0.0, 1.0);
 
-        assert_eq!(fll_cross_product_discriminator(p1, p2, 0.0), 0.0);
+        assert!(fll_cross_product_discriminator(p1, p2, 0.0).abs() < 1e-12);
     }
 
     #[test]
@@ -1023,7 +1032,7 @@ mod tests {
 
         d.reset();
 
-        assert_eq!(d.current_phase_std_rad(), 0.0);
+        assert!(d.current_phase_std_rad().abs() < 1e-12);
     }
 
     #[test]
