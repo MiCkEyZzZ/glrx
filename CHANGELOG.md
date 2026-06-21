@@ -9,15 +9,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
-- Добавлен DLL (`dll.rs`) для отслеживания фазы PRN-кода.
-- Добавлен выбор типа дискриминатора через `DllDiscriminatorKind`:
-  - `Nelp` использует `EplOutput::dll_nelp()`
-  - `Ele` использует `EplOutput::dll_ele()`
-- Добавлена нормализация выхода дискриминатора в чипы через `discriminate()` с
-  делением на `2 × half_chip_spacing`.
-- Добавлен петлевой фильтр второго порядка (`DllLoopFilter`) с расчётом `tau1` и
-  `tau2` по формулам из `docs/TRACKING.md`.
-- Добавлены интеграционные тесты с реальным PRN-кодом через `correlator_epl` и `make_epl_replicas`.
+- **tracking**
+  - Добавлен DLL (`dll.rs`) для отслеживания фазы PRN-кода.
+  - Добавлен выбор типа дискриминатора через `DllDiscriminatorKind`:
+    - `Nelp` использует `EplOutput::dll_nelp()`
+    - `Ele` использует `EplOutput::dll_ele()`
+  - Добавлена нормализация выхода дискриминатора в чипы через `discriminate()` с
+    делением на `2 × half_chip_spacing`.
+  - Добавлен петлевой фильтр второго порядка (`DllLoopFilter`) с расчётом `tau1`
+    и `tau2` по формулам из `docs/TRACKING.md`.
+  - Добавлены интеграционные тесты с реальным PRN-кодом через `correlator_epl` и
+    `make_epl_replicas`.
 
 ### Fixed
 
@@ -101,7 +103,6 @@ prn, block_size, sample_rate_hz, config, cache)` — без `&mut self`, без 
   - реализован SPSC ring buffer streaming слой с политиками переполнения
     (DropOldest / BlockProducer / ErrorOnOverflow)
   - добавлена детекция разрывов потока и метрики стабильности входного сигнала
-
 - **DSP core primitives (signal processing layer)**:
   - добавлены базовые DSP операции: complex mixing (NCO-based downconversion),
     FIR filtering, resampling (decimation/interpolation)
@@ -112,14 +113,12 @@ prn, block_size, sample_rate_hz, config, cache)` — без `&mut self`, без 
   - добавлены EPL correlation utilities (early/prompt/late) для GNSS tracking pipeline
   - реализованы normalization utilities (RMS / power scaling / gain control)
   - добавлены benchmark suites для всех DSP операций с throughput-метриками
-
 - **PRN / signal generation layer**:
   - реализована генерация GPS L1 C/A PRN кодов (Gold sequences, 1023 chips)
   - добавлена таблица PRN 1–32 с корректной конфигурацией регистров сдвига
   - реализован кэш PRN последовательностей для ускорения acquisition
   - добавлена поддержка fractional chip shifting для sub-sample correlation
   - подготовлена архитектура расширения под GLONASS и Galileo PRN (stub layer)
-
 - **streaming & metrics infrastructure**:
   - добавлен потоковый ring buffer с фиксированными слотами и lock-free consumer
     interface
@@ -127,14 +126,11 @@ prn, block_size, sample_rate_hz, config, cache)` — без `&mut self`, без 
   - добавлена система метрик входного потока (sample rate estimation, dropped samples,
     interruptions, signal power estimation)
   - интегрированы runtime diagnostics для контроля стабильности RF input
-
 - **cargo/config.toml**:
   - добавил `target-dir` и `rustflags` для оптимизации нативного производительности
-
 - **justfile**:
   - добавил команды для сборки проекта: `build`, `build-release`, `build-perf`,
     `build-native`
-
 - **signal**
   - добавлен `mixer.rs`:
     - `Nco` — фазовый аккумулятор с advance(), set_frequency(), reset(), generate(n)
@@ -173,7 +169,6 @@ prn, block_size, sample_rate_hz, config, cache)` — без `&mut self`, без 
       - FFT: 512/1024/2048/4096 × forward / inverse / cross_correlate_power
       - Correlator: correlate_single, correlate_epl, shift_code
       - Power/norm: compute_power, normalize
-
 - **.github**:
   - добавлен CODEOWNERS
   - добавлен cargo-blacklist.txt
@@ -185,7 +180,6 @@ prn, block_size, sample_rate_hz, config, cache)` — без `&mut self`, без 
 
 - **iq_source**:
   - `IqSource` trait и `IqBlock` для унифицированного чтения IQ-сэмплов.
-
 - **file**:
   - `FileSource` Читает raw interleaved I/Q в трёх форматах через `byteorder`
   - `BufReader` с буфером 1 МБ для минимизации syscall'ов
@@ -193,13 +187,11 @@ prn, block_size, sample_rate_hz, config, cache)` — без `&mut self`, без 
   - Seek по семплам (не байтам) — вычисляет байтовый offset сам
   - `total_samples()` и `duration_s()` через метаданные файла
   - Метрики sample rate через накопленный счётчик
-
 - **sdr**:
   - `MockSdrSource` — детерминированный комплексный синусоид exp(j·2π·f·t) с
     псевдошумом, фаза непрерывна между блоками
   - Шаблон `SoapySource` (за feature flag sdr) — скелет с подробными комментариями
     где что подключать, enumerate() stub
-
 - **stream**:
   - SPSC ring buffer на `Mutex<Option<Slot>>` слотах
   - Три политики переполнения: `DropOldest`, `ErrorOnOverflow`, `BlockProducer`
@@ -208,15 +200,12 @@ prn, block_size, sample_rate_hz, config, cache)` — без `&mut self`, без 
   - `StreamConsumer` реализует `IqSource` — прозрачно встраивается в pipeline
   - Исправлен баг с `wrapping_sub % (capacity+1)` — заменён на явный
     `AtomicUsize count`
-
 - **config**:
   - `RfConfig` для настройки частоты дискретизации, центральной частоты и усиления.
-
 - **metrics**:
   - Метрики потока (`SourceMetrics`): total samples, dropped samples, measured rate,
     interruptions, power estimate.
   - Тесты для чтения файлов, нормализации сэмплов и проверки метрик.
-
 - **docs**:
   - добавил описание `ARCHITECTURE`
   - добавил описание `DSP`
