@@ -1120,4 +1120,65 @@ mod tests {
 
         assert_eq!(pll.benchmark_metrics().total_epochs, 15);
     }
+
+    #[test]
+    fn test_pll_lock_costas_discriminator_near_zero_for_aligned_phase() {
+        let mut pll = Pll::new(
+            PllConfig {
+                fll_to_pll_stable_epochs: 1,
+                fll_stable_threshold_hz: 1000.0,
+                ..PllConfig::default()
+            },
+            0.0,
+        );
+
+        // Принудительное быстрое переключение в режим PLL с помощью выровненного (реального, положительного) сигнала.
+        let aligned = Complex32::new(1.0, 0.0);
+        let mut last_out = pll.update(aligned);
+
+        for _ in 0..5 {
+            last_out = pll.update(aligned);
+
+            if last_out.state == PllState::PllLock {
+                break;
+            }
+        }
+
+        assert_eq!(last_out.state, PllState::PllLock);
+
+        let out = pll.update(aligned);
+
+        assert!(
+            out.discriminator_output.abs() < 0.05,
+            "aligned phase under Costas discriminator should be near zero, got {}",
+            out.discriminator_output
+        );
+    }
+
+    #[test]
+    fn test_pll_lock_costas_removes_180_degree_bit_ambiguity() {
+        let mut pll = Pll::new(
+            PllConfig {
+                fll_to_pll_stable_epochs: 1,
+                fll_stable_threshold_hz: 1000.0,
+                ..PllConfig::default()
+            },
+            0.0,
+        );
+
+        let positive_bit = Complex32::new(1.0, 0.0);
+        let negative_bit = Complex32::new(-1.0, 0.0); // 180° flipped nav bit
+
+        for _ in 0..5 {
+            pll.update(positive_bit);
+        }
+
+        let out_pos = pll.update(positive_bit);
+        let out_neg = pll.update(negative_bit);
+
+        // Costas (dd_atan) должен давать схожую малую ошибку для обоих
+        // знаков навигационного бита (в отличие от обычного atan2).
+        assert!(out_pos.discriminator_output.abs() < 0.2);
+        assert!(out_neg.discriminator_output.abs() < 0.2);
+    }
 }
