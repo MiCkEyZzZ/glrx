@@ -212,6 +212,27 @@ pub struct PllOutput {
     pub coherent_epoch_completed: bool,
 }
 
+/// Метрики производительности PLL для бенчмарков.
+///
+/// `time_to_lock_ms` и `steady_state_error_rad` - ключевые показатели,
+/// требуемые для оценки качества контура.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PllBenchmarkMetrics {
+    /// Время от начала захвата (первого `update`) до перехода в `PllLock`,
+    /// в миллисекундах. `None`, если PLL-lock ещё не достигнут.
+    pub time_to_lock_ms: Option<f64>,
+
+    /// Стандартное отклонение фазовой ошибки в установившемся режиме (рад),
+    /// вычисленное по последнему скользящему окну детектора lock.
+    pub steady_state_phase_error_rad: f32,
+
+    /// Текущая оценка C/N₀ (дБ-Гц), если доступна.
+    pub cn0_db_hz: Option<f32>,
+
+    /// Общее число обработанных эпох (1 мс каждая) с момента создания/сброса.
+    pub total_epochs: u64,
+}
+
 /// PLL (Costas Loop) tracking
 #[derive(Debug, Clone)]
 pub struct Pll {
@@ -271,6 +292,11 @@ impl CoherentAccumulator {
         }
     }
 
+    /// Настроенный период накопления (мс).
+    pub const fn integration_ms(&self) -> usize {
+        self.traget_epochs
+    }
+
     /// Сбрасывает накопленную сумму без изменения настройки периода.
     pub fn reset(&mut self) {
         self.sum = Complex32::default();
@@ -324,10 +350,22 @@ impl PllLoopFilter {
         phase_error_rad * self.coeffs.a1 + self.acc1
     }
 
+    /// Сбрасывает оба интегратора.
+    pub fn reset(&mut self) {
+        self.acc1 = 0.0;
+        self.acc2 = 0.0;
+    }
+
     /// Текущее значение интегратора частоты (Гц) - для диагностики.
     #[must_use]
     pub const fn freq_integrator(&self) -> f32 {
         self.acc1
+    }
+
+    /// Текущее значение интегратора частоты (Гц) - для диагностики.
+    #[must_use]
+    pub const fn coeffs(&self) -> PllFilterCoeffs {
+        self.coeffs
     }
 }
 
@@ -408,6 +446,19 @@ impl LockDetector {
             / n;
 
         variance.sqrt()
+    }
+
+    fn current_cn0_db_hz(&self) -> Option<f32> {
+        if self.prompt_history.len() < 2 {
+            None
+        } else {
+            Some(cn0_estimate(&self.prompt_history, 0.001))
+        }
+    }
+
+    fn reset(&mut self) {
+        self.phase_errors.clear();
+        self.prompt_history.clear();
     }
 }
 
@@ -580,10 +631,72 @@ impl Pll {
         self.fll_prev_prompt = None;
     }
 
+    /// Текущая (развёрнутая) фаза несущей в радианах.
+    #[must_use]
+    pub const fn carrier_phase_rad(&self) -> f64 {
+        self.carrier_phase_rad
+    }
+
     /// Текущая оценка частоты несущей (Гц).
     #[must_use]
     pub const fn carrier_freq_hz(&self) -> f64 {
         self.carrier_freq_hz
+    }
+
+    /// Текущее состояние контура.
+    #[must_use]
+    pub const fn state(&self) -> PllState {
+        self.state
+    }
+
+    /// Конфигурация PLL.
+    #[must_use]
+    pub const fn config(&self) -> &PllConfig {
+        &self.config
+    }
+
+    /// Общее число обработанных 1-мс эпох.
+    #[must_use]
+    pub const fn total_epochs(&self) -> u64 {
+        self.total_epochs
+    }
+
+    /// Снимок метрик для бенчмарка: время захвата и установившаяся ошибка.
+    ///
+    /// `time_to_lock_ms` вычисляется как `(pll_locked_at_epoch) × integration_ms`.
+    #[must_use]
+    pub fn benchmark_metrics(&self) -> PllBenchmarkMetrics {
+        let time_to_lock_ms = self
+            .pll_locked_at_epoch
+            .map(|epoch| epoch as f64 * 1.0 /* 1 ms per raw epoch */);
+
+        PllBenchmarkMetrics {
+            time_to_lock_ms,
+            steady_state_phase_error_rad: self.lock_detector.current_phase_std_rad(),
+            cn0_db_hz: self.lock_detector.current_cn0_db_hz(),
+            total_epochs: self.total_epochs,
+        }
+    }
+
+    /// Полный сброс PLL с новой начальной (Doppler) частотой — используется
+    /// после повторного acquisition при потере lock.
+    pub fn reset(
+        &mut self,
+        initial_doppler_hz: f64,
+    ) {
+        let period_s = self.config.integration_ms as f32 / 1000.0;
+
+        self.filter = PllLoopFilter::new(self.config.fll_bandwidth_hz, period_s);
+        self.accumulator.reset();
+        self.lock_detector.reset();
+
+        self.carrier_phase_rad = 0.0;
+        self.carrier_freq_hz = initial_doppler_hz;
+        self.state = PllState::Searching;
+        self.fll_prev_prompt = None;
+        self.fll_stable_count = 0;
+        self.total_epochs = 0;
+        self.pll_locked_at_epoch = None;
     }
 }
 
@@ -766,5 +879,30 @@ mod tests {
         let p2 = Complex32::new(0.0, 1.0);
 
         assert_eq!(fll_cross_product_discriminator(p1, p2, 0.0), 0.0);
+    }
+
+    #[test]
+    fn test_filter_coeffs_all_positive() {
+        let c = PllFilterCoeffs::new(18.0);
+
+        assert!(c.a1 > 0.0);
+        assert!(c.a2 > 0.0);
+        assert!(c.a3 > 0.0);
+    }
+
+    #[test]
+    fn test_filter_coeffs_wider_bandwidth_larger_coefficients() {
+        let narrow = PllFilterCoeffs::new(10.0);
+        let wide = PllFilterCoeffs::new(50.0);
+
+        assert!(wide.a1 > narrow.a1);
+        assert!(wide.a2 > narrow.a2);
+        assert!(wide.a3 > narrow.a3);
+    }
+
+    #[test]
+    #[should_panic(expected = "bandwidth must be positive")]
+    fn filter_coeffs_zero_bandwidth_panics() {
+        let _ = PllFilterCoeffs::new(0.0);
     }
 }
