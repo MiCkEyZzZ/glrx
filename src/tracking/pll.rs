@@ -760,6 +760,10 @@ impl Default for PllConfig {
 mod tests {
     use super::*;
 
+    fn make_pll() -> Pll {
+        Pll::with_defaults(0.0)
+    }
+
     #[test]
     fn test_accumulator_returns_none_before_target_reached() {
         let mut acc = CoherentAccumulator::new(5);
@@ -1020,5 +1024,100 @@ mod tests {
         d.reset();
 
         assert_eq!(d.current_phase_std_rad(), 0.0);
+    }
+
+    #[test]
+    fn test_pll_starts_in_searching_state() {
+        let pll = make_pll();
+
+        assert_eq!(pll.state(), PllState::Searching);
+    }
+
+    #[test]
+    fn test_pll_first_update_enters_fll_lock() {
+        let mut pll = make_pll();
+        let out = pll.update(Complex32::new(1.0, 0.0));
+
+        // 1 мс интеграция по умолчанию → завершается на первом вызове
+        assert!(out.coherent_epoch_completed);
+        assert_eq!(out.state, PllState::FllLock);
+    }
+
+    #[test]
+    fn test_pll_total_epochs_increments() {
+        let mut pll = make_pll();
+
+        for i in 1..=10u64 {
+            pll.update(Complex32::new(1.0, 0.0));
+
+            assert_eq!(pll.total_epochs(), i);
+        }
+    }
+
+    #[test]
+    fn test_pll_switches_to_pll_lock_after_stable_fll_epochs() {
+        let mut pll = Pll::new(
+            PllConfig {
+                fll_to_pll_stable_epochs: 3,
+                fll_stable_threshold_hz: 50.0,
+                ..PllConfig::default()
+            },
+            0.0,
+        );
+
+        // Постоянный, не вращающийся Prompt → frequency error ≈ 0 после
+        // первого вызова (нет предыдущего значения), затем стабильно мало.
+        let prompt = Complex32::new(1.0, 0.0);
+        let mut reached_pll_lock = false;
+
+        for _ in 0..20 {
+            let out = pll.update(prompt);
+
+            if out.state == PllState::PllLock {
+                reached_pll_lock = true;
+                break;
+            }
+        }
+
+        assert!(
+            reached_pll_lock,
+            "PLL should switch from FLL to PLL lock with stable input"
+        );
+    }
+
+    #[test]
+    fn test_pll_benchmark_time_to_lock_recorded_after_switch() {
+        let mut pll = Pll::new(
+            PllConfig {
+                fll_to_pll_stable_epochs: 2,
+                fll_stable_threshold_hz: 50.0,
+                ..PllConfig::default()
+            },
+            0.0,
+        );
+
+        let prompt = Complex32::new(1.0, 0.0);
+
+        for _ in 0..20 {
+            pll.update(prompt);
+        }
+
+        let metrics = pll.benchmark_metrics();
+
+        assert!(
+            metrics.time_to_lock_ms.is_some(),
+            "time_to_lock_ms should be recorded"
+        );
+    }
+
+    #[test]
+    fn test_pll_benchmark_metrics_total_epochs_matches() {
+        let mut pll = make_pll();
+
+        for _ in 0..15 {
+            pll.update(Complex32::new(1.0, 0.0));
+        }
+
+        assert_eq!(pll.benchmark_metrics().total_epochs, 15);
     }
 }
