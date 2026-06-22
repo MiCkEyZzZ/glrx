@@ -2,8 +2,6 @@
 
 [![CI](https://github.com/MiCkEyZzZ/glrx/actions/workflows/ci.yml/badge.svg)](https://github.com/MiCkEyZzZ/glrx/actions)
 ![Rust](https://img.shields.io/badge/language-Rust-orange)
-[![docs.rs](https://docs.rs/glrx/badge.svg)](https://docs.rs/glrx)
-![Status](https://img.shields.io/badge/status-pre--alpha-yellow)
 
 **GLRX** is a modular GNSS SDR receiver implemented in Rust, focused on
 layered DSP pipelines, satellite tracking, and navigation processing.
