@@ -405,6 +405,59 @@ impl ChannelBank {
         reaped
     }
 
+    /// Обновляет все активные каналы одной 1мс эпохой EPL-данных.
+    /// `epl_by_prn` - ф-я, возвращая [`EplOutput`] для заданного
+    /// PRN на текущей эпохе (как правило, результат отдельной
+    /// `correlator_epl` на канал, с собственным Early/Prompt/Late
+    /// репликами кода данного канала).
+    ///
+    /// Последовательная версия: используется когда фича `rayon` отключена.
+    /// Каждый канал обновляется независимо - порядок не важен.
+    #[cfg(not(feature = "rayon"))]
+    pub fn update_all<F>(
+        &mut self,
+        mut epl_by_prn: F,
+    ) -> Vec<ChannelOutput>
+    where
+        F: FnMut(u8) -> EplOutput,
+    {
+        self.slots
+            .iter_mut()
+            .filter_map(Option::as_mut)
+            .map(|ch| {
+                let epl = epl_by_prn(ch.prn);
+
+                ch.update(&epl)
+            })
+            .collect()
+    }
+
+    /// Параллельная версия [`ChannelBank::update_all`] через Rayon.
+    ///
+    /// Каналы не делят мутироемое состояние между собой, поэтому
+    /// обновление каждого канала безопасно выполнять в отдельном
+    /// потоке. `epl_by_prn` должна `Sync`, так как вызывается параллельно
+    /// из нескольких потоков.
+    #[cfg(feature = "rayon")]
+    pub fn update_all<F>(
+        &mut self,
+        epl_by_prn: F,
+    ) -> Vec<ChannelOutput>
+    where
+        F: Fn(u8) -> EplOutput + Sync,
+    {
+        use rayon::prelude::*;
+
+        self.slots
+            .par_iter_mut()
+            .filter_map(Option::as_mut)
+            .map(|ch| {
+                let epl = epl_by_prn(ch.prn);
+                ch.update(&epl)
+            })
+            .collect()
+    }
+
     /// Итератор по занятым каналам (только для чтения).
     pub fn channels(&self) -> impl Iterator<Item = &TrackingChannel> {
         self.slots.iter().filter_map(Option::as_ref)
@@ -725,5 +778,64 @@ mod tests {
 
         assert!(bank.find_by_prn(21).is_some());
         assert!(bank.find_by_prn(99).is_none());
+    }
+
+    #[test]
+    fn test_bank_update_all_updates_every_active_channel() {
+        let mut bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 4,
+            ..Default::default()
+        });
+        bank.allocate(&dummy_acquisition(1, 0.0));
+        bank.allocate(&dummy_acquisition(2, 0.0));
+
+        let outputs = bank.update_all(|_prn| EplOutput {
+            early: Complex32::new(1.0, 0.0),
+            prompt: Complex32::new(1.0, 0.0),
+            late: Complex32::new(1.0, 0.0),
+        });
+
+        assert_eq!(outputs.len(), 2);
+    }
+
+    #[test]
+    fn test_bank_update_all_skips_idle_slots() {
+        let mut bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 8,
+            ..Default::default()
+        });
+        bank.allocate(&dummy_acquisition(1, 0.0));
+
+        let outputs = bank.update_all(|_prn| EplOutput {
+            early: Complex32::default(),
+            prompt: Complex32::new(1.0, 0.0),
+            late: Complex32::default(),
+        });
+
+        assert_eq!(
+            outputs.len(),
+            1,
+            "only the allocated slot should produce output"
+        );
+    }
+
+    #[test]
+    fn test_bank_update_all_passes_correct_prn_to_callback() {
+        let mut bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 4,
+            ..Default::default()
+        });
+        bank.allocate(&dummy_acquisition(17, 0.0));
+
+        let outputs = bank.update_all(|prn| {
+            assert_eq!(prn, 17);
+            EplOutput {
+                early: Complex32::default(),
+                prompt: Complex32::new(1.0, 0.0),
+                late: Complex32::default(),
+            }
+        });
+
+        assert_eq!(outputs[0].prn, 17);
     }
 }
