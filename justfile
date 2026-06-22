@@ -1,26 +1,11 @@
-# =============================================================================
-# GLRX Development Commands
-# =============================================================================
+# The GLRX development commands (Justfile)
 #
-# Unified interface for:
-# - formatting
-# - linting
-# - testing
-# - documentation
-# - embedded / no_std validation
-# - dependency auditing
-# - CI simulation
+# # Purpose:
+#   Unified interface for formatting, linting, testing, documentation,
+#   embedded validation, feature-matrix checks, and CI simulation.
 #
 # Usage:
 #   just <recipe>
-#
-# Examples:
-#   just check
-#   just test
-#   just ci
-#   just bench
-#
-# =============================================================================
 
 set shell := ["bash", "-ceuo", "pipefail"]
 

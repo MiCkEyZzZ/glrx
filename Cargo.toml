@@ -14,7 +14,7 @@ homepage = "https://github.com/MiCkEyZzZ/glrx"
 repository = "https://github.com/MiCkEyZzZ/glrx"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
-edition = "2021"
+edition = "2024"
 keywords = ["gnss", "gps", "sdr", "dsp", "receiver"]
 categories = [
     "aerospace",

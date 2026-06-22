@@ -47,7 +47,7 @@ use num_complex::Complex32;
 use crate::signal::{
     fft::FftEngine,
     mixer::Nco,
-    prn_code::{PrnCodeCache, GPS_CODE_LENGTH},
+    prn_code::{GPS_CODE_LENGTH, PrnCodeCache},
 };
 
 /// Result of a successful PRN acquisition search.
