@@ -14,6 +14,6 @@ fn main() {
 
         let out = dll.update(&epl);
 
-        println!("epoch={} code_freq={:.3}", epoch, out.chip_freq_hz);
+        println!("эпоха={} частота_кода={:.3}", epoch, out.chip_freq_hz);
     }
 }

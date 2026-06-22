@@ -5,6 +5,7 @@ use num_complex::Complex32;
 fn main() {
     let mut dll = Dll::new(DllConfig::default());
 
+    // Тест с положительной ошибкой кода (early > late)
     for epoch in 0..100 {
         let epl = EplOutput {
             early: Complex32::new(0.8, 0.0),
@@ -14,6 +15,6 @@ fn main() {
 
         let out = dll.update(&epl);
 
-        println!("epoch={} code_freq={:.3}", epoch, out.chip_freq_hz);
+        println!("эпоха={} частота_кода={:.3}", epoch, out.chip_freq_hz);
     }
 }
