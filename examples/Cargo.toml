@@ -12,7 +12,20 @@ path = "src/dll_positive_code_error.rs"
 name = "dll_negative_code_error"
 path = "src/dll_negative_code_error.rs"
 
+[[bin]]
+name = "pll_up_tracking"
+path = "src/pll_up_tracking.rs"
+
+[[bin]]
+name = "pll_down_tracking"
+path = "src/pll_down_tracking.rs"
+
+[[bin]]
+name = "pll_step_response"
+path = "src/pll_step_response.rs"
+
 [dependencies]
 glrx = { path = ".." }
 
 num-complex = "0.4.6"
+env_logger = "0.11.10"
