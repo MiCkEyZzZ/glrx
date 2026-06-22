@@ -22,10 +22,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: just,taplo-cli,cargo-deny
+      - run: cargo fmt -- --check
 
-      - run: just fmt-check
-      - run: just clippy
-      - run: just test
+      - run: cargo clippy --workspace -- -D warnings
+
+      - run: cargo test --workspace
