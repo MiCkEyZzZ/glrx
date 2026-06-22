@@ -173,24 +173,15 @@ pub struct FllOutput {
 /// ```
 #[derive(Debug, Clone)]
 pub struct Fll {
-    /// Some
-    pub config: FllConfig,
-    /// Some
-    pub filter: FllLoopFilter,
-    /// Some
-    pub freq_hz: f64,
-    /// Some
-    pub state: FllState,
-    /// Some
-    pub prev_prompt: Option<Complex32>,
-    /// Some
-    pub stable_count: usize,
-    /// Some
-    pub narrowed: bool,
-    /// Some
-    pub ready_for_pll: bool,
-    /// Some
-    pub total_epochs: u64,
+    config: FllConfig,
+    filter: FllLoopFilter,
+    freq_hz: f64,
+    state: FllState,
+    prev_prompt: Option<Complex32>,
+    stable_count: usize,
+    narrowed: bool,
+    ready_for_pll: bool,
+    total_epochs: u64,
 }
 
 impl FllFilterCoeffs {
@@ -296,10 +287,174 @@ impl Fll {
         Self::new(FllConfig::default(), initial_doppler_hz)
     }
 
-    /// Текущий состояние контура.
+    /// Подаёт одну (когерентно накопленную) Prompt-корреляцию в контур
+    pub fn update(
+        &mut self,
+        prompt: Complex32,
+    ) -> FllOutput {
+        self.total_epochs += 1;
+
+        if self.state == FllState::PllLock {
+            return self.frozen_output();
+        }
+
+        let Some(prev) = self.prev_prompt else {
+            self.prev_prompt = Some(prompt);
+            self.state = FllState::FllLock;
+
+            return FllOutput {
+                freq_hz: self.freq_hz,
+                discriminator_output: 0.0,
+                filter_output: 0.0,
+                state: self.state,
+                ready_for_pll: false,
+                current_bandwidth_hz: self.current_bandwidth(),
+            };
+        };
+
+        let freq_error_hz =
+            cross_product_discriminator(prev, prompt, f64::from(self.config.update_period_s));
+
+        self.prev_prompt = Some(prompt);
+
+        let mut filter_output = self.filter.update(freq_error_hz as f32);
+
+        filter_output =
+            filter_output.clamp(-self.config.output_clamp_hz, self.config.output_clamp_hz);
+
+        self.freq_hz += f64::from(filter_output);
+
+        self.track_stability(freq_error_hz);
+        self.maybe_narrow_bandwidth();
+        self.maybe_signal_handoff();
+
+        FllOutput {
+            freq_hz: self.freq_hz,
+            discriminator_output: freq_error_hz,
+            filter_output,
+            state: self.state,
+            ready_for_pll: self.ready_for_pll,
+            current_bandwidth_hz: self.current_bandwidth(),
+        }
+    }
+
+    /// Явно переводит контур в `PllLock`, фиксируя текущую частоту как
+    /// финальную оценку, передаваемую внешнему PLL.
+    pub const fn complete_handoff(&mut self) -> f64 {
+        self.state = FllState::PllLock;
+        self.freq_hz
+    }
+
+    /// Текущая оценка частоты несущей (Гц).
+    #[must_use]
+    pub const fn freq_hz(&self) -> f64 {
+        self.freq_hz
+    }
+
+    /// Текущее состояние контура.
     #[must_use]
     pub const fn state(&self) -> FllState {
         self.state
+    }
+
+    /// Возвращает `true`, если контур стгнализирует готовность к передаче в PLL.
+    #[must_use]
+    pub const fn is_ready_for_pll(&self) -> bool {
+        self.ready_for_pll
+    }
+
+    /// Конфигурация контура.
+    #[must_use]
+    pub const fn config(&self) -> &FllConfig {
+        &self.config
+    }
+
+    /// Число обработанных эпох с момента создания/последнего сброса.
+    #[must_use]
+    pub const fn total_epochs(&self) -> u64 {
+        self.total_epochs
+    }
+
+    /// Полный сброс FLL с новой начальной (Доплер) частотой - например,
+    /// после потери в PLL и необходимости повторного грубого захвата.
+    pub fn reset(
+        &mut self,
+        initial_doppler_hz: f64,
+    ) {
+        self.filter =
+            FllLoopFilter::new(self.config.wide_bandwidth_hz, self.config.update_period_s);
+        self.freq_hz = initial_doppler_hz;
+        self.state = FllState::Searching;
+        self.prev_prompt = None;
+        self.stable_count = 0;
+        self.narrowed = false;
+        self.ready_for_pll = false;
+        self.total_epochs = 0;
+    }
+
+    fn track_stability(
+        &mut self,
+        freq_error_hz: f64,
+    ) {
+        if freq_error_hz.abs() < f64::from(self.config.stable_threshold_hz) {
+            self.stable_count += 1;
+        } else {
+            self.stable_count = 0;
+        }
+    }
+
+    fn maybe_narrow_bandwidth(&mut self) {
+        if !self.narrowed && self.stable_count >= self.config.epochs_before_narrowing {
+            log::debug!(
+                "FLL: narrowing bandwidth {} Hz -> {} Hz after {} stable epochs",
+                self.config.wide_bandwidth_hz,
+                self.config.narrow_bandwidth_hz,
+                self.stable_count
+            );
+
+            let preserved = self.filter.integrator();
+
+            self.filter =
+                FllLoopFilter::new(self.config.narrow_bandwidth_hz, self.config.update_period_s);
+            self.filter.set_integrator(preserved);
+            self.narrowed = true;
+            // Считаем стабильность заново на узкой полосе для решения о handoff
+            self.stable_count = 0;
+        }
+    }
+
+    fn maybe_signal_handoff(&mut self) {
+        if self.narrowed
+            && !self.ready_for_pll
+            && self.stable_count >= self.config.epochs_before_handoff
+        {
+            log::debug!(
+                "FLL: ready for PLL handoff at freq={:.1} Hz after {} stable narrow epochs",
+                self.freq_hz,
+                self.stable_count
+            );
+
+            self.ready_for_pll = true;
+        }
+    }
+
+    const fn current_bandwidth(&self) -> f32 {
+        if self.narrowed {
+            self.config.narrow_bandwidth_hz
+        } else {
+            self.config.wide_bandwidth_hz
+        }
+    }
+
+    const fn frozen_output(&self) -> FllOutput {
+        FllOutput {
+            freq_hz: self.freq_hz,
+            discriminator_output: 0.0,
+            filter_output: 0.0,
+            state: self.state,
+            ready_for_pll: self.ready_for_pll,
+            current_bandwidth_hz: self.current_bandwidth(),
+        }
     }
 }
 
@@ -475,5 +630,119 @@ mod tests {
         let fll = Fll::with_defaults(0.0);
 
         assert_eq!(fll.state(), FllState::Searching);
+    }
+
+    #[test]
+    fn test_fll_first_update_enters_fll_lock_without_discriminator_output() {
+        let mut fll = Fll::with_defaults(1000.0);
+        let out = fll.update(Complex32::new(1.0, 0.0));
+
+        assert_eq!(out.state, FllState::FllLock);
+        assert!(out.discriminator_output.abs() < 1e-12);
+        // Частота не должна меняться на первой эпохе (нет пары для cross-product)
+        assert!((out.freq_hz - 1000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_fll_total_epochs_increments() {
+        let mut fll = Fll::with_defaults(0.0);
+
+        for i in 1..=10u64 {
+            fll.update(Complex32::new(1.0, 0.0));
+
+            assert_eq!(fll.total_epochs(), i);
+        }
+    }
+
+    #[test]
+    fn test_fll_starts_on_wide_bandwidth() {
+        let mut fll = Fll::with_defaults(0.0);
+        let out = fll.update(Complex32::new(1.0, 0.0));
+        let out2 = fll.update(Complex32::new(1.0, 0.0));
+
+        assert!((out.current_bandwidth_hz - fll.config().wide_bandwidth_hz).abs() < 1e-6);
+        assert!((out2.current_bandwidth_hz - fll.config().wide_bandwidth_hz).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_fll_narrows_bandwidth_after_stable_epochs() {
+        let cfg = FllConfig {
+            epochs_before_narrowing: 3,
+            stable_threshold_hz: 50.0,
+            ..FllConfig::default()
+        };
+        let mut fll = Fll::new(cfg, 0.0);
+        // Постоянная фаза (DC) → нулевая частотная ошибка на каждой эпохе после первой.
+        let prompt = Complex32::new(1.0, 0.0);
+        let mut narrowed_seen = false;
+
+        for _ in 0..20 {
+            let out = fll.update(prompt);
+
+            if (out.current_bandwidth_hz - cfg.narrow_bandwidth_hz).abs() < 1e-6 {
+                narrowed_seen = true;
+                break;
+            }
+        }
+
+        assert!(narrowed_seen, "bandwidth should narrow after stable epochs");
+    }
+
+    #[test]
+    fn test_fll_signals_ready_for_pll_after_narrow_and_handoff_epochs() {
+        let cfg = FllConfig {
+            epochs_before_narrowing: 2,
+            epochs_before_handoff: 2,
+            stable_threshold_hz: 50.0,
+            ..FllConfig::default()
+        };
+        let mut fll = Fll::new(cfg, 0.0);
+        let prompt = Complex32::new(1.0, 0.0);
+        let mut became_ready = false;
+
+        for _ in 0..30 {
+            let out = fll.update(prompt);
+            if out.ready_for_pll {
+                became_ready = true;
+                break;
+            }
+        }
+
+        assert!(
+            became_ready,
+            "FLL should signal ready_for_pll under stable input"
+        );
+        assert!(fll.is_ready_for_pll());
+    }
+
+    #[test]
+    fn test_fll_complete_handoff_transitions_to_pll_lock() {
+        let mut fll = Fll::with_defaults(1234.5);
+
+        fll.update(Complex32::new(1.0, 0.0));
+        fll.update(Complex32::new(1.0, 0.0));
+
+        let handoff_freq = fll.complete_handoff();
+
+        assert_eq!(fll.state(), FllState::PllLock);
+        assert!((handoff_freq - fll.freq_hz()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_fll_update_after_handoff_is_noop() {
+        let mut fll = Fll::with_defaults(1000.0);
+
+        fll.update(Complex32::new(1.0, 0.0));
+        fll.complete_handoff();
+
+        let freq_before = fll.freq_hz();
+        let out = fll.update(Complex32::new(0.0, 1.0)); // would normally produce large error
+        let freq_after = fll.freq_hz();
+
+        assert_eq!(out.state, FllState::PllLock);
+        assert!(
+            (freq_before - freq_after).abs() < 1e-9,
+            "frequency must not change after handoff"
+        );
     }
 }
