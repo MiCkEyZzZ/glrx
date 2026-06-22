@@ -9,6 +9,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **carrier tracking (PLL/FLL)** сразу после пункта про FLL-assisted PLL contour:
+- Issue #GLRX-8 completed: robust FLL acquisition path for large initial Doppler
+  errors
+  - Added free-function cross-product discriminator:
+    `cross_product_discriminator(prev, curr, period_s) -> f64`
+  - Added explicit FLL → PLL handoff API:
+    `Fll::complete_handoff() -> f64`, with `update()` becoming no-op after `PllLock`
+  - Added automatic bandwidth scheduling:
+    wide bandwidth at start, narrow bandwidth in lock, with integrator preservation
+    via `set_integrator`
+  - Reduced FLL state machine to three states only:
+    `Searching / FllLock / PllLock`
+  - Added transient-response tests for ±3 kHz initial frequency error
+  - Added integration sanity test with real `correlator_epl` Prompt output
 - **carrier tracking (PLL/FLL)**
   - Полностью заменён черновой `tracking/pll.rs` (упрощённый q·sign(I) дискриминатор
     без фильтра и без FLL) на полноценную PLL/FLL архитектуру уровня GNSS receiver.
@@ -60,6 +74,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- FLL now narrows bandwidth automatically after consecutive stable epochs and
+  preserves loop continuity during wide → narrow transition
+- FLL handoff to PLL is now explicit and deterministic through
+  `ready_for_pll` / `complete_handoff()`
 - Упрощён поток FLL→PLL переключения:
   - интегратор частоты сохраняется при переходе (`switch_to_pll`)
   - исключён скачок частоты при смене полосы фильтра
