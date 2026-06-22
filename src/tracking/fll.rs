@@ -508,6 +508,8 @@ impl Default for FllConfig {
 mod tests {
     use std::f64::consts::TAU;
 
+    use crate::signal::correlator::base::correlator_epl;
+
     use super::*;
 
     fn prompt_at_freq(
@@ -924,5 +926,18 @@ mod tests {
             epoch_ready_1k.unwrap() <= epoch_ready_3k.unwrap(),
             "smaller initial error should not take longer to lock: {epoch_ready_1k:?} vs {epoch_ready_3k:?}",
         );
+    }
+
+    #[test]
+    fn test_fll_integration_with_correlator_epl_prompt() {
+        let n = 64;
+        let code = vec![1.0_f32; n];
+        let signal = vec![Complex32::new(1.0, 0.0); n];
+        let epl = correlator_epl(&signal, &code, &code, &code);
+        let mut fll = Fll::with_defaults(0.0);
+        let out = fll.update(epl.prompt);
+
+        assert_eq!(out.state, FllState::FllLock);
+        assert!(out.freq_hz.is_finite());
     }
 }
