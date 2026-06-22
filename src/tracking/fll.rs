@@ -196,7 +196,7 @@ pub struct Fll {
 impl FllFilterCoeffs {
     /// Вычисляет коэффициент из шумовой полосы петли.
     ///
-    /// # Panic
+    /// # Panics
     ///
     /// Паникует, если `bandwidth_hz <= 0.0`.
     #[must_use]
@@ -240,24 +240,24 @@ impl FllLoopFilter {
     }
 
     /// Сбрасывает интегратор.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.integrator = 0.0;
     }
 
     /// Текущее значение интегратора (Гц) - для диагностики и для переноса
     /// накопленной поправки при передаче в PLL.
     #[must_use]
-    pub fn integrator(&self) -> f32 {
+    pub const fn integrator(&self) -> f32 {
         self.integrator
     }
 
     /// Принудительно устанавливает значение интегратора - используется при
     /// смене полосы (wide -> narrow), чтобы не было скачка выходной поправки.
-    pub fn set_integrator(
+    pub const fn set_integrator(
         &mut self,
         value: f32,
     ) {
-        self.integrator = value
+        self.integrator = value;
     }
 
     /// Коэффициент фильтра.
@@ -391,7 +391,7 @@ mod tests {
         let p1 = Complex32::new(1.0, 0.0);
         let p2 = Complex32::new(0.0, 1.0);
 
-        assert_eq!(cross_product_discriminator(p1, p2, 0.0), 0.0);
+        assert!(cross_product_discriminator(p1, p2, 0.0).abs() < 1e-12);
     }
 
     #[test]
