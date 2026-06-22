@@ -737,6 +737,7 @@ pub fn verify_all_parallel(
 /// Идентичная сигнатура и поведение (включая отсутствие retry) —
 /// переключение через `features = ["rayon"]` в `Cargo.toml`.
 #[cfg(not(feature = "rayon"))]
+#[must_use]
 pub fn verify_all_parallel(
     signal: &[Complex32],
     block_size: usize,
