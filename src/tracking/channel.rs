@@ -29,6 +29,15 @@
 //!     ▼ (PLL сигнализирует LockLost)
 //! ChannelState::LockLost  →  деаллокация / повторный acquisition
 //! ```
+//!
+//! # Многоканальность
+//!
+//! [`ChannelBank`] держит конфигурируемое число каналов (8/16/32),
+//! аллоцирует их под новые [`AcquisitionResult`] и деаллоцирует при потере
+//! lock. Обновление всех активных каналов на одну IQ-эпоху выполняется
+//! через [`ChannelBank::update_all`] — последовательно или параллельно
+//! (через Rayon, если включена фича `rayon`), так как каналы полностью
+//! независимы друг от друга и не делят мутируемое состояние.
 
 use num_complex::Complex32;
 
@@ -68,6 +77,11 @@ pub enum ChannelState {
 }
 
 /// Скользящая оценка C/N₀ каналов на основе истории Prompt-корреляции.
+///
+/// Отдельная от внутренних оценок `Pll`/`LockDetector` — это оценка
+/// **уровня канала**, используемая для общих метрик и решений о
+/// деаллокации (`TrackingChannel`), не привязанная к конкретной стадии
+/// (FLL/PLL).
 #[derive(Debug, Clone)]
 pub struct Cn0Estimator {
     history: Vec<Complex32>,
@@ -114,6 +128,9 @@ pub struct ChannelOutput {
 }
 
 /// Канал сопровождения одного спутника: DLL + FLL -> PLL + оценка C/N₀.
+///
+/// Создаётся через [`TrackingChannel::allocate`] из [`AcquisitionResult`];
+/// каждая 1-мс эпоха подаётся через [`TrackingChannel::update`].
 pub struct TrackingChannel {
     /// PRN отслеживаемого спутника
     pub prn: u8,
@@ -142,11 +159,30 @@ pub struct TrackingChannel {
 /// Конфигурация банка каналов.
 #[derive(Debug, Clone)]
 pub struct ChannelBankConfig {
-    /// Число одновременно отслеживаемых спутников
+    /// Число одновременно отслеживаемых спутников. Issue фиксирует
+    /// типичные значения: 8 / 16 / 32, но допускается любое положительное
+    /// число.
     pub num_channels: usize,
 
     /// Конфигурация, применяемая, к каждому новому каналу при аллокации
     pub channel: ChannelConfig,
+}
+
+/// Суммарные метрики банкаканалов.
+#[derive(Debug, Clone, Default)]
+pub struct ChannelBankMetrics {
+    /// Число сконфигурированных слотов (емкость банка)
+    pub capacity: usize,
+
+    /// Число каналов, активно отслеживающих спутник (не `Idle`)
+    pub active_channels: usize,
+
+    /// Число каналов в состоянии `PhaseLock`
+    pub phase_locked_channels: usize,
+
+    /// Время захвата (`lock_time_ms`) по каждому активному PRN, для
+    /// которого фазовый lock уже достигнут
+    pub lock_time_per_prn_ms: Vec<(u8, u64)>,
 }
 
 /// Пул каналов сопровождения с конфигурируемой ёмкостью (8/16/32 и т.д.)
@@ -456,6 +492,28 @@ impl ChannelBank {
                 ch.update(&epl)
             })
             .collect()
+    }
+
+    /// Снимок метрик банка: число активных/locked каналов, время захвата
+    /// по каждому PRN с достигнутым фазовым lock.
+    #[must_use]
+    pub fn metrics(&self) -> ChannelBankMetrics {
+        let active: Vec<&TrackingChannel> = self.slots.iter().filter_map(Option::as_ref).collect();
+        let phase_locked_channels = active
+            .iter()
+            .filter(|ch| ch.state == ChannelState::PhaseLock)
+            .count();
+        let lock_time_per_prn_ms = active
+            .iter()
+            .filter_map(|ch| ch.lock_time_ms().map(|t| (ch.prn, t)))
+            .collect();
+
+        ChannelBankMetrics {
+            capacity: self.slots.len(),
+            active_channels: active.len(),
+            phase_locked_channels,
+            lock_time_per_prn_ms,
+        }
     }
 
     /// Итератор по занятым каналам (только для чтения).
@@ -837,5 +895,114 @@ mod tests {
         });
 
         assert_eq!(outputs[0].prn, 17);
+    }
+
+    #[test]
+    fn test_bank_metrics_reports_capacity_and_active_count() {
+        let mut bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 8,
+            ..Default::default()
+        });
+        bank.allocate(&dummy_acquisition(1, 0.0));
+        bank.allocate(&dummy_acquisition(2, 0.0));
+
+        let metrics = bank.metrics();
+        assert_eq!(metrics.capacity, 8);
+        assert_eq!(metrics.active_channels, 2);
+    }
+
+    #[test]
+    fn test_bank_metrics_phase_locked_count_increases_under_stable_signal() {
+        let mut bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 2,
+            channel: fast_channel_config(),
+        });
+        bank.allocate(&dummy_acquisition(1, 0.0));
+
+        let epl = EplOutput {
+            early: Complex32::new(1.0, 0.0),
+            prompt: Complex32::new(1.0, 0.0),
+            late: Complex32::new(1.0, 0.0),
+        };
+
+        let mut phase_locked_at_some_point = false;
+        for _ in 0..50 {
+            bank.update_all(|_| epl.clone());
+            if bank.metrics().phase_locked_channels > 0 {
+                phase_locked_at_some_point = true;
+                break;
+            }
+        }
+
+        assert!(phase_locked_at_some_point);
+    }
+
+    #[test]
+    fn test_bank_metrics_lock_time_per_prn_populated_after_lock() {
+        let mut bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 1,
+            channel: fast_channel_config(),
+        });
+        bank.allocate(&dummy_acquisition(42, 0.0));
+
+        let epl = EplOutput {
+            early: Complex32::new(1.0, 0.0),
+            prompt: Complex32::new(1.0, 0.0),
+            late: Complex32::new(1.0, 0.0),
+        };
+
+        for _ in 0..50 {
+            bank.update_all(|_| epl.clone());
+        }
+
+        let metrics = bank.metrics();
+        let found = metrics
+            .lock_time_per_prn_ms
+            .iter()
+            .any(|(prn, _)| *prn == 42);
+        assert!(
+            found,
+            "PRN 42 should appear in lock_time_per_prn_ms once locked"
+        );
+    }
+
+    #[test]
+    fn test_bank_metrics_empty_bank_reports_zero_active() {
+        let bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 16,
+            ..Default::default()
+        });
+        let metrics = bank.metrics();
+        assert_eq!(metrics.active_channels, 0);
+        assert_eq!(metrics.phase_locked_channels, 0);
+        assert!(metrics.lock_time_per_prn_ms.is_empty());
+    }
+
+    #[test]
+    fn test_bank_handles_many_channels_independently() {
+        let mut bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 32,
+            ..Default::default()
+        });
+        for prn in 1u8..=32 {
+            assert!(
+                bank.allocate(&dummy_acquisition(prn, f64::from(prn) * 10.0))
+                    .is_some()
+            );
+        }
+        assert_eq!(bank.free_slots(), 0);
+
+        let outputs = bank.update_all(|prn| EplOutput {
+            early: Complex32::new(1.0, 0.0),
+            prompt: Complex32::new(f64::from(prn) as f32, 0.0),
+            late: Complex32::new(1.0, 0.0),
+        });
+
+        assert_eq!(outputs.len(), 32);
+        // Каждый канал должен получить именно свой PRN.
+        let mut prns: Vec<u8> = outputs.iter().map(|o| o.prn).collect();
+        prns.sort_unstable();
+        let expected: Vec<u8> = (1u8..=32).collect();
+        assert_eq!(prns, expected);
     }
 }
