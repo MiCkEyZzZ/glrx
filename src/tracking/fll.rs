@@ -510,7 +510,7 @@ mod tests {
 
     use super::*;
 
-    fn _prompt_at_freq(
+    fn prompt_at_freq(
         freq_hz: f64,
         sample_idx: u64,
         period_s: f64,
@@ -518,6 +518,26 @@ mod tests {
         let phase = TAU * freq_hz * sample_idx as f64 * period_s;
 
         Complex32::new(phase.cos() as f32, phase.sin() as f32)
+    }
+
+    /// Симулирует серию Prompt-корреляций с истинной частотной ошибкой
+    /// `true_error_hz` относительно начальной оценки FLL (которая всегда
+    /// стартует с `0.0` Hz внутренней частоты дискриминатора — сам
+    /// дискриминатор видит фазовое вращение, соответствующее ошибке).
+    fn run_transient(
+        fll: &mut Fll,
+        true_error_hz: f64,
+        epochs: usize,
+    ) -> Vec<FllOutput> {
+        let period_s = f64::from(fll.config().update_period_s);
+        let mut outputs = Vec::with_capacity(epochs);
+
+        for k in 0..epochs {
+            let prompt = prompt_at_freq(true_error_hz, k as u64, period_s);
+            outputs.push(fll.update(prompt));
+        }
+
+        outputs
     }
 
     #[test]
@@ -743,6 +763,166 @@ mod tests {
         assert!(
             (freq_before - freq_after).abs() < 1e-9,
             "frequency must not change after handoff"
+        );
+    }
+
+    #[test]
+    fn test_fll_reset_returns_to_searching_with_new_doppler() {
+        let mut fll = Fll::with_defaults(0.0);
+
+        for _ in 0..10 {
+            fll.update(Complex32::new(1.0, 0.0));
+        }
+
+        fll.reset(2500.0);
+
+        assert_eq!(fll.state(), FllState::Searching);
+        assert_eq!(fll.total_epochs(), 0);
+        assert!((fll.freq_hz() - 2500.0).abs() < 1e-9);
+        assert!(!fll.is_ready_for_pll());
+    }
+
+    #[test]
+    fn test_transient_response_converges_for_plus_3khz_error() {
+        // +3 kHz начальная ошибка частоты — типичный случай после
+        // acquisition с грубым Doppler-шагом.
+        let cfg = FllConfig {
+            wide_bandwidth_hz: 150.0,
+            narrow_bandwidth_hz: 30.0,
+            stable_threshold_hz: 50.0,
+            epochs_before_narrowing: 5,
+            epochs_before_handoff: 5,
+            ..FllConfig::default()
+        };
+        let mut fll = Fll::new(cfg, 0.0);
+        let outputs = run_transient(&mut fll, 3000.0, 500);
+        // К концу симуляции остаточная частотная ошибка дискриминатора
+        // должна быть много меньше начальной ошибки в 3 кГц.
+        let final_window: Vec<f64> = outputs[outputs.len() - 20..]
+            .iter()
+            .map(|o| o.discriminator_output.abs())
+            .collect();
+        let mean_final_error: f64 = final_window.iter().sum::<f64>() / final_window.len() as f64;
+
+        assert!(
+            mean_final_error < 100.0,
+            "residual frequency error should shrink well below 3000 Hz, got {mean_final_error}"
+        );
+    }
+
+    #[test]
+    fn test_transient_response_converges_for_minus_3khz_error() {
+        let cfg = FllConfig {
+            wide_bandwidth_hz: 150.0,
+            narrow_bandwidth_hz: 30.0,
+            stable_threshold_hz: 50.0,
+            epochs_before_narrowing: 5,
+            epochs_before_handoff: 5,
+            ..FllConfig::default()
+        };
+        let mut fll = Fll::new(cfg, 0.0);
+        let outputs = run_transient(&mut fll, -3000.0, 500);
+        let final_window: Vec<f64> = outputs[outputs.len() - 20..]
+            .iter()
+            .map(|o| o.discriminator_output.abs())
+            .collect();
+        let mean_final_error: f64 = final_window.iter().sum::<f64>() / final_window.len() as f64;
+
+        assert!(
+            mean_final_error < 100.0,
+            "residual frequency error should shrink well below 3000 Hz, got {mean_final_error}"
+        );
+    }
+
+    #[test]
+    fn test_transient_response_reaches_pll_ready_within_bounded_time_at_3khz() {
+        // При большой начальной ошибке (issue: ±3 кГц) контур должен всё
+        // же успеть дойти до состояния "готов к PLL" за разумное число
+        // эпох (не зависнуть в FllLock навечно).
+        let cfg = FllConfig {
+            wide_bandwidth_hz: 150.0,
+            narrow_bandwidth_hz: 30.0,
+            stable_threshold_hz: 50.0,
+            epochs_before_narrowing: 5,
+            epochs_before_handoff: 5,
+            ..FllConfig::default()
+        };
+        let mut fll = Fll::new(cfg, 0.0);
+        let outputs = run_transient(&mut fll, 3000.0, 1000);
+        let became_ready = outputs.iter().any(|o| o.ready_for_pll);
+
+        assert!(
+            became_ready,
+            "should reach ready_for_pll within 1000 epochs at +3 kHz error"
+        );
+    }
+
+    #[test]
+    fn test_transient_response_output_never_diverges_at_3khz() {
+        let mut fll = Fll::with_defaults(0.0);
+        let outputs = run_transient(&mut fll, 3000.0, 500);
+
+        for out in &outputs {
+            assert!(out.freq_hz.is_finite());
+            assert!(out.filter_output.is_finite());
+        }
+    }
+
+    #[test]
+    fn test_transient_response_narrows_bandwidth_only_after_convergence_at_3khz() {
+        // На начальных эпохах с большой ошибкой полоса должна оставаться
+        // широкой (контур ещё не стабилизировался); сужение происходит
+        // только после того, как ошибка упадёт ниже порога.
+        let cfg = FllConfig {
+            wide_bandwidth_hz: 150.0,
+            narrow_bandwidth_hz: 30.0,
+            stable_threshold_hz: 50.0,
+            epochs_before_narrowing: 5,
+            epochs_before_handoff: 5,
+            ..FllConfig::default()
+        };
+        let mut fll = Fll::new(cfg, 0.0);
+        let outputs = run_transient(&mut fll, 3000.0, 500);
+
+        // Первые несколько эпох — заведомо широкая полоса (ошибка огромна).
+        assert!(
+            (outputs[1].current_bandwidth_hz - cfg.wide_bandwidth_hz).abs() < 1e-6,
+            "should still be wide early in transient"
+        );
+
+        // К концу симуляции должно произойти сужение.
+        let last = outputs.last().unwrap();
+
+        assert!(
+            (last.current_bandwidth_hz - cfg.narrow_bandwidth_hz).abs() < 1e-6,
+            "should have narrowed by the end of a long transient"
+        );
+    }
+
+    #[test]
+    fn test_transient_response_handles_smaller_1khz_error_faster_than_3khz() {
+        // Меньшая начальная ошибка должна достигать ready_for_pll не позже
+        // (как правило — раньше или одновременно), чем большая.
+        let cfg = FllConfig {
+            wide_bandwidth_hz: 150.0,
+            narrow_bandwidth_hz: 30.0,
+            stable_threshold_hz: 50.0,
+            epochs_before_narrowing: 5,
+            epochs_before_handoff: 5,
+            ..FllConfig::default()
+        };
+        let mut fll_1k = Fll::new(cfg, 0.0);
+        let mut fll_3k = Fll::new(cfg, 0.0);
+        let out_1k = run_transient(&mut fll_1k, 1000.0, 1000);
+        let out_3k = run_transient(&mut fll_3k, 3000.0, 1000);
+        let epoch_ready_1k = out_1k.iter().position(|o| o.ready_for_pll);
+        let epoch_ready_3k = out_3k.iter().position(|o| o.ready_for_pll);
+
+        assert!(epoch_ready_1k.is_some(), "1 kHz error should converge");
+        assert!(epoch_ready_3k.is_some(), "3 kHz error should converge");
+        assert!(
+            epoch_ready_1k.unwrap() <= epoch_ready_3k.unwrap(),
+            "smaller initial error should not take longer to lock: {epoch_ready_1k:?} vs {epoch_ready_3k:?}",
         );
     }
 }
