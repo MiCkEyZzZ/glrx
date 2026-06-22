@@ -7,13 +7,17 @@
 //! ```
 
 #![forbid(unsafe_code)]
-#![deny(missing_docs)]
-#![deny(clippy::all)]
-#![deny(clippy::pedantic)]
+#![deny(
+    missing_docs,
+    rustdoc::broken_intra_doc_links,
+    rustdoc::private_intra_doc_links
+)]
+#![deny(clippy::all, clippy::pedantic)]
 #![allow(clippy::similar_names)]
 #![warn(clippy::must_use_candidate)]
 #![warn(clippy::missing_const_for_fn)]
 #![warn(clippy::semicolon_if_nothing_returned)]
+#![warn(clippy::cargo, clippy::nursery)]
 #![allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
