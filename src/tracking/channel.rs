@@ -330,6 +330,13 @@ impl TrackingChannel {
             _ => self.state,
         };
     }
+
+    /// Возвращает `true`, если канал считается потерявшим lock и должен быть
+    /// деаллоцирован вызывающим кодом (см. [`ChannelBank::reap_lost`]).
+    #[must_use]
+    pub fn is_lock_lost(&self) -> bool {
+        self.state == ChannelState::LockLost
+    }
 }
 
 impl ChannelBank {
@@ -370,6 +377,46 @@ impl ChannelBank {
         ));
 
         Some(idx)
+    }
+
+    /// Принудительно освобождает слот `idx` (например, по внешнему решению
+    /// — например, при ручном переакуайре спутника).
+    pub fn deallocate(
+        &mut self,
+        idx: usize,
+    ) -> Option<TrackingChannel> {
+        self.slots.get_mut(idx).and_then(Option::take)
+    }
+
+    /// Освобождает все каналы, находящиеся в состоянии `LockLost`.
+    ///
+    /// Возвращает список PRN деаллоцированных спутников.
+    pub fn reap_lost(&mut self) -> Vec<u8> {
+        let mut reaped = Vec::new();
+
+        for slot in &mut self.slots {
+            let should_reap = slot.as_ref().is_some_and(TrackingChannel::is_lock_lost);
+
+            if should_reap && let Some(channel) = slot.take() {
+                reaped.push(channel.prn);
+            }
+        }
+
+        reaped
+    }
+
+    /// Итератор по занятым каналам (только для чтения).
+    pub fn channels(&self) -> impl Iterator<Item = &TrackingChannel> {
+        self.slots.iter().filter_map(Option::as_ref)
+    }
+
+    /// Находит канал по PRN, если он аллоцирован.
+    #[must_use]
+    pub fn find_by_prn(
+        &self,
+        prn: u8,
+    ) -> Option<&TrackingChannel> {
+        self.channels().find(|ch| ch.prn == prn)
     }
 }
 
@@ -607,5 +654,76 @@ mod tests {
         });
 
         assert_eq!(bank.capacity(), 32);
+    }
+
+    #[test]
+    fn test_bank_allocate_fills_free_slot() {
+        let mut bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 4,
+            ..Default::default()
+        });
+        let acq = dummy_acquisition(11, 100.0);
+        let idx = bank.allocate(&acq);
+
+        assert!(idx.is_some());
+        assert_eq!(bank.free_slots(), 3);
+    }
+
+    #[test]
+    fn test_bank_allocate_returns_none_when_full() {
+        let mut bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 2,
+            ..Default::default()
+        });
+
+        assert!(bank.allocate(&dummy_acquisition(1, 0.0)).is_some());
+        assert!(bank.allocate(&dummy_acquisition(2, 0.0)).is_some());
+        assert!(bank.allocate(&dummy_acquisition(3, 0.0)).is_none());
+    }
+
+    #[test]
+    fn test_bank_deallocate_frees_slot() {
+        let mut bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 2,
+            ..Default::default()
+        });
+        let idx = bank.allocate(&dummy_acquisition(1, 0.0)).unwrap();
+
+        assert_eq!(bank.free_slots(), 1);
+
+        let removed = bank.deallocate(idx);
+
+        assert!(removed.is_some());
+        assert_eq!(bank.free_slots(), 2);
+    }
+
+    #[test]
+    fn test_bank_reap_lost_removes_only_lock_lost_channels() {
+        let mut bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 3,
+            ..Default::default()
+        });
+
+        bank.allocate(&dummy_acquisition(1, 0.0));
+        bank.allocate(&dummy_acquisition(2, 0.0));
+
+        // Никто ещё не потерял lock — reap не должен ничего удалить.
+        let reaped = bank.reap_lost();
+
+        assert!(reaped.is_empty());
+        assert_eq!(bank.free_slots(), 1);
+    }
+
+    #[test]
+    fn test_bank_find_by_prn_locates_allocated_channel() {
+        let mut bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 4,
+            ..Default::default()
+        });
+
+        bank.allocate(&dummy_acquisition(21, 0.0));
+
+        assert!(bank.find_by_prn(21).is_some());
+        assert!(bank.find_by_prn(99).is_none());
     }
 }
