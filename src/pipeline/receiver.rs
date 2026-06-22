@@ -56,7 +56,7 @@ use num_complex::Complex32;
 
 use crate::{
     acquisition::verifier::{
-        verify_all_parallel, AcquisitionResult, AcquisitionVerifier, VerifierConfig, VerifierStats,
+        AcquisitionResult, AcquisitionVerifier, VerifierConfig, VerifierStats, verify_all_parallel,
     },
     pipeline,
     rf::{error::RfError, iq_source::IqSource},
@@ -624,9 +624,11 @@ mod tests {
         let events = rx.process_block(&signal);
 
         assert!(!events.is_empty());
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, ReceiverEvent::StateChanged { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ReceiverEvent::StateChanged { .. }))
+        );
     }
 
     #[test]

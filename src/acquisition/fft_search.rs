@@ -23,7 +23,7 @@ use num_complex::Complex32;
 use crate::signal::{
     fft::FftEngine,
     mixer::Nco,
-    prn_code::{PrnCodeCache, GPS_CODE_LENGTH},
+    prn_code::{GPS_CODE_LENGTH, PrnCodeCache},
 };
 
 /// Configuration for the acquisition frequency/Doppler search grid.
@@ -301,10 +301,10 @@ impl PcpsSearch {
         let prns: Vec<u8> = self.prn_ffts.keys().copied().collect();
         let mut detected = Vec::new();
         for prn in prns {
-            if let Some(result) = self.search_prn(signal, prn) {
-                if result.detected {
-                    detected.push(result);
-                }
+            if let Some(result) = self.search_prn(signal, prn)
+                && result.detected
+            {
+                detected.push(result);
             }
         }
 

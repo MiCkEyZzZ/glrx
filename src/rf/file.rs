@@ -43,7 +43,7 @@ use crate::rf::{
     format::SampleFormat,
     iq_source::{IqBlock, IqSource},
     metrics::SourceMetrics,
-    normalise::{norm_f32, norm_i16, norm_i8},
+    normalise::{norm_f32, norm_i8, norm_i16},
 };
 
 /// IQ source backed by a binary file.
@@ -144,7 +144,7 @@ impl FileSource {
                                 Err(RfError::EndOfFile)
                             } else {
                                 Ok(samples)
-                            }
+                            };
                         }
                         Err(e) => return Err(e.into()),
                     };
@@ -163,7 +163,7 @@ impl FileSource {
                                 Err(RfError::EndOfFile)
                             } else {
                                 Ok(samples)
-                            }
+                            };
                         }
                         Err(e) => return Err(e.into()),
                     };
@@ -182,7 +182,7 @@ impl FileSource {
                                 Err(RfError::EndOfFile)
                             } else {
                                 Ok(samples)
-                            }
+                            };
                         }
                         Err(e) => return Err(e.into()),
                     };
