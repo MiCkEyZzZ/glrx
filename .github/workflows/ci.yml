@@ -2,9 +2,7 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -24,8 +22,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo install just --locked
-      - run: cargo install taplo-cli --locked
-      - run: cargo install cargo-deny --locked
+      # быстрые бинарники вместо cargo install
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,taplo-cli,cargo-deny
 
-      - run: just ci
+      # формат
+      - run: just fmt --check
+
+      # clippy (строго, но быстро)
+      - run: just clippy
+
+      # тесты
+      - run: just test
