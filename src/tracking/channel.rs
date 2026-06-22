@@ -134,7 +134,7 @@ pub struct TrackingChannel {
     pub state: ChannelState,
 
     config: ChannelConfig,
-    _allocated_at_epoch: u64,
+    allocated_at_epoch: u64,
     phase_locked_at_epoch: Option<u64>,
     total_epochs: u64,
 }
@@ -229,7 +229,7 @@ impl TrackingChannel {
             cn0_estimator,
             state: ChannelState::Acquired,
             config,
-            _allocated_at_epoch: 0,
+            allocated_at_epoch: 0,
             phase_locked_at_epoch: None,
             total_epochs: 0,
         }
@@ -259,6 +259,27 @@ impl TrackingChannel {
             cn0_db_hz: self.cn0_estimator.estimate_db_hz(),
             state: self.state,
         }
+    }
+
+    /// Время от аллокации до первого достижения `PhaseLock`, в
+    /// миллисекундах (1 эпоха = 1мс). `None`, если фазовый lock ещё не
+    /// достигнут.
+    #[must_use]
+    pub fn lock_time_ms(&self) -> Option<u64> {
+        self.phase_locked_at_epoch
+            .map(|e| e - self.allocated_at_epoch)
+    }
+
+    /// Число обработанных эпох с момента аллокации.
+    #[must_use]
+    pub const fn total_epochs(&self) -> u64 {
+        self.total_epochs
+    }
+
+    /// Текущая оценка C/N₀ канала (дБ-Гц).
+    #[must_use]
+    pub fn cn0_db_hz(&self) -> Option<f32> {
+        self.cn0_estimator.estimate_db_hz()
     }
 
     fn step_frequency_or_phase(
@@ -350,6 +371,19 @@ mod tests {
         }
     }
 
+    fn fast_channel_config() -> ChannelConfig {
+        // Быстрые пороги, чтобы FLL и handoff происходили в чситанные эпохи
+        ChannelConfig {
+            fll: FllConfig {
+                epochs_before_narrowing: 2,
+                epochs_before_handoff: 2,
+                stable_threshold_hz: 1000.0,
+                ..FllConfig::default()
+            },
+            ..ChannelConfig::default()
+        }
+    }
+
     #[test]
     fn test_cn0_estimator_none_with_fewer_than_two_samples() {
         let mut est = Cn0Estimator::with_defaults();
@@ -405,5 +439,101 @@ mod tests {
         let ch = TrackingChannel::allocate(&acq, ChannelConfig::default());
 
         assert!((ch.dll.code_phase_offset_chips() - acq.code_phase_chips).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_channel_update_progresses_through_frequency_lock() {
+        let acq = dummy_acquisition(1, 0.0);
+        let mut ch = TrackingChannel::allocate(&acq, fast_channel_config());
+        let epl = EplOutput {
+            early: Complex32::new(1.0, 0.0),
+            prompt: Complex32::new(1.0, 0.0),
+            late: Complex32::new(1.0, 0.0),
+        };
+        let out = ch.update(&epl);
+
+        assert_eq!(out.prn, 1);
+        assert!(matches!(
+            out.state,
+            ChannelState::FrequencyLock | ChannelState::PhaseLock
+        ));
+    }
+
+    #[test]
+    fn test_channel_eventually_reaches_phase_lock_under_stable_signal() {
+        let acq = dummy_acquisition(5, 0.0);
+        let mut ch = TrackingChannel::allocate(&acq, fast_channel_config());
+        let epl = EplOutput {
+            early: Complex32::new(1.0, 0.0),
+            prompt: Complex32::new(1.0, 0.0),
+            late: Complex32::new(1.0, 0.0),
+        };
+        let mut reached_phase_lock = false;
+
+        for _ in 0..50 {
+            if ch.update(&epl).state == ChannelState::PhaseLock {
+                reached_phase_lock = true;
+                break;
+            }
+        }
+
+        assert!(
+            reached_phase_lock,
+            "channel should reach PhaseLock under stable signal"
+        );
+        assert!(ch.pll.is_some());
+    }
+
+    #[test]
+    fn test_channel_lock_time_ms_recorded_after_phase_lock() {
+        let acq = dummy_acquisition(9, 0.0);
+        let mut ch = TrackingChannel::allocate(&acq, fast_channel_config());
+        let epl = EplOutput {
+            early: Complex32::new(1.0, 0.0),
+            prompt: Complex32::new(1.0, 0.0),
+            late: Complex32::new(1.0, 0.0),
+        };
+
+        for _ in 0..50 {
+            ch.update(&epl);
+            if ch.state == ChannelState::PhaseLock {
+                break;
+            }
+        }
+
+        assert!(ch.lock_time_ms().is_some());
+    }
+
+    #[test]
+    fn test_channel_cn0_db_hz_available_after_enough_epochs() {
+        let acq = dummy_acquisition(2, 0.0);
+        let mut ch = TrackingChannel::allocate(&acq, ChannelConfig::default());
+        let epl = EplOutput {
+            early: Complex32::new(1.0, 0.0),
+            prompt: Complex32::new(100.0, 0.0),
+            late: Complex32::new(1.0, 0.0),
+        };
+
+        for _ in 0..5 {
+            ch.update(&epl);
+        }
+
+        assert!(ch.cn0_db_hz().is_some());
+    }
+
+    #[test]
+    fn test_channel_total_epochs_increments() {
+        let acq = dummy_acquisition(4, 0.0);
+        let mut ch = TrackingChannel::allocate(&acq, ChannelConfig::default());
+        let epl = EplOutput {
+            early: Complex32::default(),
+            prompt: Complex32::new(1.0, 0.0),
+            late: Complex32::default(),
+        };
+
+        for i in 1..=10u64 {
+            ch.update(&epl);
+            assert_eq!(ch.total_epochs(), i);
+        }
     }
 }
