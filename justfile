@@ -159,11 +159,20 @@ miri:
 # Dependency & Security Checks
 # =============================================================================
 
+audit:
+    cargo audit
+
+geiger:
+    cargo geiger
+
 deny:
     cargo deny check
 
 unused-deps:
     cargo machete
+
+coverage:
+    cargo llvm-cov --workspace --html
 
 # =============================================================================
 # Release Validation
@@ -183,6 +192,11 @@ ci:
     just check
     just test
     just doc
+
+ci-full:
+    just ci
+    just audit
+    just coverage
 
 # =============================================================================
 # Cleanup

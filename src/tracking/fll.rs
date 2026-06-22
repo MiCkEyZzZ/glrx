@@ -173,15 +173,24 @@ pub struct FllOutput {
 /// ```
 #[derive(Debug, Clone)]
 pub struct Fll {
-    config: FllConfig,
-    filter: FllLoopFilter,
-    freq_hz: f64,
-    state: FllState,
-    prev_prompt: Option<Complex32>,
-    stable_count: usize,
-    narrowed: bool,
-    ready_for_pll: bool,
-    total_epochs: u64,
+    /// Some
+    pub config: FllConfig,
+    /// Some
+    pub filter: FllLoopFilter,
+    /// Some
+    pub freq_hz: f64,
+    /// Some
+    pub state: FllState,
+    /// Some
+    pub prev_prompt: Option<Complex32>,
+    /// Some
+    pub stable_count: usize,
+    /// Some
+    pub narrowed: bool,
+    /// Some
+    pub ready_for_pll: bool,
+    /// Some
+    pub total_epochs: u64,
 }
 
 impl FllFilterCoeffs {
@@ -258,6 +267,42 @@ impl FllLoopFilter {
     }
 }
 
+impl Fll {
+    /// Создаёт Fll с заданной конфигурацией и начальной (Доплер) частотой
+    /// несущей, полученной из acquisition.
+    #[must_use]
+    pub fn new(
+        config: FllConfig,
+        initial_doppler_hz: f64,
+    ) -> Self {
+        let filter = FllLoopFilter::new(config.wide_bandwidth_hz, config.update_period_s);
+
+        Self {
+            config,
+            filter,
+            freq_hz: initial_doppler_hz,
+            state: FllState::Searching,
+            prev_prompt: None,
+            stable_count: 0,
+            narrowed: false,
+            ready_for_pll: false,
+            total_epochs: 0,
+        }
+    }
+
+    /// Создаёт FLL с конфигурацией по умолчанию.
+    #[must_use]
+    pub fn with_defaults(initial_doppler_hz: f64) -> Self {
+        Self::new(FllConfig::default(), initial_doppler_hz)
+    }
+
+    /// Текущий состояние контура.
+    #[must_use]
+    pub const fn state(&self) -> FllState {
+        self.state
+    }
+}
+
 /// Cross-product дискриминатор частоты.
 ///
 /// # Аргументы
@@ -310,7 +355,7 @@ mod tests {
 
     use super::*;
 
-    fn prompt_at_freq(
+    fn _prompt_at_freq(
         freq_hz: f64,
         sample_idx: u64,
         period_s: f64,
@@ -400,6 +445,7 @@ mod tests {
 
         let _ = f.update(10.0);
         let _ = f.update(10.0);
+
         f.reset();
 
         assert!(f.integrator().abs() < 1e-6);
@@ -422,5 +468,12 @@ mod tests {
         let out_wide = wide.update(100.0).abs();
 
         assert!(out_wide > out_narrow);
+    }
+
+    #[test]
+    fn test_fll_starts_in_searching_state() {
+        let fll = Fll::with_defaults(0.0);
+
+        assert_eq!(fll.state(), FllState::Searching);
     }
 }
