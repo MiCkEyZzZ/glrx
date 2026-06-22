@@ -302,6 +302,7 @@ version = "0.2.0"
 dependencies = [
  "byteorder",
  "criterion",
+ "gnss-time",
  "log",
  "num-complex",
  "parking_lot",
@@ -309,6 +310,12 @@ dependencies = [
  "rustfft",
  "tempfile",
 ]
+
+[[package]]
+name = "gnss-time"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e20a323900249bb2159dc4214b89d2d023d8d1806b8d821a0b615a8e1e753627"
 
 [[package]]
 name = "half"

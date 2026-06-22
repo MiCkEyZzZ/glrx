@@ -37,6 +37,7 @@ rayon = []
 
 [dependencies]
 byteorder = "1.5.0"
+gnss-time = "0.5.3"
 log = "0.4.29"
 num-complex = "0.4.6"
 parking_lot = "0.12.5"
