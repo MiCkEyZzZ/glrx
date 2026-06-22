@@ -151,8 +151,8 @@ pub struct ChannelBankConfig {
 
 /// Пул каналов сопровождения с конфигурируемой ёмкостью (8/16/32 и т.д.)
 pub struct ChannelBank {
-    _slots: Vec<Option<TrackingChannel>>,
-    _config: ChannelBankConfig,
+    slots: Vec<Option<TrackingChannel>>,
+    config: ChannelBankConfig,
 }
 
 impl Cn0Estimator {
@@ -329,6 +329,47 @@ impl TrackingChannel {
             },
             _ => self.state,
         };
+    }
+}
+
+impl ChannelBank {
+    /// Создаёт банк с `num_channels` свободными слотами.
+    #[must_use]
+    pub fn new(config: ChannelBankConfig) -> Self {
+        let num_channels = config.num_channels;
+        let slots = (0..num_channels).map(|_| None).collect();
+
+        Self { slots, config }
+    }
+
+    /// Ёмкость банка (число слотов).
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Число свободных слотов.
+    #[must_use]
+    pub fn free_slots(&self) -> usize {
+        self.slots.iter().filter(|s| s.is_none()).count()
+    }
+
+    /// Аллоцирует свободный слот под `acquisition`.
+    ///
+    /// Возвращает индекс выделенного слота, либо `None`, если все слоты
+    /// заняты.
+    pub fn allocate(
+        &mut self,
+        acquisition: &AcquisitionResult,
+    ) -> Option<usize> {
+        let idx = self.slots.iter().position(Option::is_none)?;
+
+        self.slots[idx] = Some(TrackingChannel::allocate(
+            acquisition,
+            self.config.channel.clone(),
+        ));
+
+        Some(idx)
     }
 }
 
@@ -535,5 +576,36 @@ mod tests {
             ch.update(&epl);
             assert_eq!(ch.total_epochs(), i);
         }
+    }
+
+    #[test]
+    fn test_bank_respects_configured_capacity_8() {
+        let bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 8,
+            ..Default::default()
+        });
+
+        assert_eq!(bank.capacity(), 8);
+        assert_eq!(bank.free_slots(), 8);
+    }
+
+    #[test]
+    fn test_bank_respects_configured_capacity_16() {
+        let bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 16,
+            ..Default::default()
+        });
+
+        assert_eq!(bank.capacity(), 16);
+    }
+
+    #[test]
+    fn test_bank_respects_configured_capacity_32() {
+        let bank = ChannelBank::new(ChannelBankConfig {
+            num_channels: 32,
+            ..Default::default()
+        });
+
+        assert_eq!(bank.capacity(), 32);
     }
 }
