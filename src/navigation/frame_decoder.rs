@@ -65,6 +65,9 @@
 /// Число 1-мс эпох в одном навигационном бите GPS L1 C/A.
 pub const EPOCHS_PER_BIT: usize = 20;
 
+/// TLM-преамбула: `0b10001011` (`0x8B`), первые 8 бит каждого TLM-слова.
+pub const TLM_PREAMBLE: [bool; 8] = [true, false, false, false, true, false, true, true];
+
 /// Детектор границы 20-мс навигационного бита по статистике переходов
 /// знака Prompt-корреляции (BPSK transitions).
 #[derive(Debug, Clone)]
@@ -378,6 +381,12 @@ pub fn check_and_correct_parity(
     ];
 
     if received == computed { Some(d) } else { None }
+}
+
+/// Проверяет совпадение первых 8 бит слова с TLM-преамбулой.
+#[must_use]
+pub fn matches_tlm_preamble(word_start: &[bool]) -> bool {
+    word_start.len() >= 8 && word_start[..8] == TLM_PREAMBLE
 }
 
 #[cfg(test)]
@@ -735,5 +744,41 @@ mod tests {
         let result = check_and_correct_parity(&word, (true, true));
 
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_preamble_matches_exact_pattern() {
+        let mut bits = vec![false; 30];
+
+        bits[0] = true;
+        bits[4] = true;
+        bits[6] = true;
+        bits[7] = true;
+
+        // 1 0 0 0 1 0 1 1 → matches TLM_PREAMBLE
+        assert!(matches_tlm_preamble(&bits));
+    }
+
+    #[test]
+    fn test_preamble_rejects_wrong_pattern() {
+        let bits = vec![false; 30];
+
+        assert!(!matches_tlm_preamble(&bits));
+    }
+
+    #[test]
+    fn test_preamble_rejects_short_slice() {
+        let bits = vec![true; 5];
+
+        assert!(!matches_tlm_preamble(&bits));
+    }
+
+    #[test]
+    fn test_preamble_rejects_one_bit_error() {
+        let mut bits = vec![true, false, false, false, true, false, true, true];
+
+        bits[3] = true; // ломаем 4-й бит
+
+        assert!(!matches_tlm_preamble(&bits));
     }
 }
