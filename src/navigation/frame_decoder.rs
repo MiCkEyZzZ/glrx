@@ -87,6 +87,19 @@ pub struct BitSynchronizer {
     min_epochs_for_decision: u64,
 }
 
+/// Накопитель, объединяющий 20 1-мс знаков Prompt в один навигационный бит
+/// после того, как [`BitSynchronizer`] определяет фазу границы.
+///
+/// Использует мажоритарное голосование по знакам внутри бита - устойчивее
+/// к одиночным ошибкам корреляции, чем взятие знака только последней эпохи.
+#[derive(Debug, Clone)]
+pub struct BitAccumulator {
+    boundary_phase: usize,
+    current_phase: usize,
+    positive_count: u32,
+    negative_count: u32,
+}
+
 impl BitSynchronizer {
     /// Создаёт синхронизатор с заданным минимальным числом эпох для
     /// принятия решения о фазе границы (рекомендуется >= 200, то есть
@@ -177,6 +190,56 @@ impl BitSynchronizer {
         self.epochs_seen = 0;
         self.prev_sign = None;
         self.epoch_in_window = 0;
+    }
+}
+
+impl BitAccumulator {
+    /// Создаёт накопитель с заданной фазой границы бита (из
+    /// [`BitSynchronizer::detected_bit_boundary_phase`]).
+    #[must_use]
+    pub const fn new(boundary_phase: usize) -> Self {
+        Self {
+            boundary_phase,
+            current_phase: 0,
+            positive_count: 0,
+            negative_count: 0,
+        }
+    }
+
+    /// Подаёт знак одной 1-мс эпохи.
+    ///
+    /// Возвращает `Some(bit)`, когда накоплены все 20 эпох одного
+    /// навигационного бита (`bit = true` для `+1` — большинства,
+    /// `false` для `-1`); внутренний счётчик сбрасывается.
+    ///
+    /// # Panics
+    ///
+    /// Паникует, если `sign` не равен `1` или `-1`.
+    pub fn push(
+        &mut self,
+        sign: i8,
+    ) -> Option<bool> {
+        assert!(sign == 1 || sign == -1, "sign must be +1 or -1, got {sign}");
+
+        if sign > 0 {
+            self.positive_count += 1;
+        } else {
+            self.negative_count += 1;
+        }
+
+        self.current_phase = (self.current_phase + 1) % EPOCHS_PER_BIT;
+
+        // Бит завершён, когда мы вернулись к фазу границы.
+        if self.current_phase == self.boundary_phase {
+            let bit = self.positive_count >= self.negative_count;
+
+            self.positive_count = 0;
+            self.negative_count = 0;
+
+            Some(bit)
+        } else {
+            None
+        }
     }
 }
 
@@ -275,5 +338,56 @@ mod tests {
         let mut sync = BitSynchronizer::with_defaults();
 
         sync.push_prompt_sign(0);
+    }
+
+    #[test]
+    fn test_accumulator_emits_bit_after_full_window() {
+        let mut acc = BitAccumulator::new(0);
+        let mut result = None;
+
+        for _ in 0..20 {
+            result = acc.push(1);
+        }
+
+        assert_eq!(result, Some(true));
+    }
+
+    #[test]
+    fn test_accumulator_majority_vote_negative() {
+        let mut acc = BitAccumulator::new(0);
+        let mut result = None;
+
+        for i in 0..20 {
+            let sign = if i < 15 { -1 } else { 1 };
+
+            result = acc.push(sign);
+        }
+
+        assert_eq!(result, Some(false));
+    }
+
+    #[test]
+    fn test_accumulator_returns_none_before_window_complete() {
+        let mut acc = BitAccumulator::new(0);
+
+        for _ in 0..19 {
+            assert_eq!(acc.push(1), None);
+        }
+    }
+
+    #[test]
+    fn test_accumulator_respects_nonzero_boundary_phase() {
+        let mut acc = BitAccumulator::new(5);
+        let mut emitted_at = None;
+
+        for i in 0..25 {
+            if let Some(_bit) = acc.push(1) {
+                emitted_at = Some(i);
+
+                break;
+            }
+        }
+
+        assert!(emitted_at.is_some());
     }
 }
