@@ -53,6 +53,9 @@ glrx
 │   │   ├── fft_search.rs
 │   │   ├── mod.rs
 │   │   └── verifier.rs
+│   ├── navigation                 # navigation
+│   │   ├── frame_decoder.rs
+│   │   └── mod.rs
 │   ├── pipeline                   # high-level pipeline
 │   │   ├── mod.rs
 │   │   └── receiver.rs            # соединяет acquisition → tracking → solver
