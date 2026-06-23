@@ -243,9 +243,267 @@ impl BitAccumulator {
     }
 }
 
+/// Проверяет и при необходимости инвертирует 24 информационных бита
+/// 30-битного слова GPS, используя уравнения parity GPS ICD-200.
+///
+/// # Аргументы
+/// - `word` - 30 бит слова, `word[0..24]` - информационные биты `d1..d24`
+///   (возможно неинвертированные, как переданы DSP-слоем), `word[24..30]` - переданные
+///   байты parity `D25..D30`.
+/// - `prev_29_30` - последние два бита (`D * 29`, `D * 30`) **предыдущего** слова
+///   потока, нужны для определения инверсии и в уравнениях двух parity-бит.
+///
+/// # Возвращает
+///
+/// - `Some(d1..d24_corrected)` - 24 информационных бита после применения инверсии `Di = di ⊕ D*30`,
+///   если все 6 уравнений parity совпали
+/// - `None`, если хотя бы одно уравнение не совпало (слово повреждено).
+#[allow(clippy::too_many_lines)]
+#[must_use]
+pub fn check_and_correct_parity(
+    word: &[bool; 30],
+    prev_d29_d30: (bool, bool),
+) -> Option<[bool; 24]> {
+    let (d_star_29, d_star_30) = prev_d29_d30;
+
+    // Применяем инверсию: Di = di ⊕ D*30 для информационных бит.
+    let mut d = [false; 24];
+
+    for (i, &bit) in word.iter().take(24).enumerate() {
+        d[i] = bit ^ d_star_30;
+    }
+
+    // Биты нумеруются с 1 в стандарте в массиве `d` индекс i соответствует d[i + 1].
+    // Вспомогательная ф-я для удобства чтения по 1-based индексу.
+    let g = |k: usize| d[k - 1];
+    let computed_d25 = d_star_29
+        ^ g(1)
+        ^ g(2)
+        ^ g(3)
+        ^ g(5)
+        ^ g(6)
+        ^ g(10)
+        ^ g(11)
+        ^ g(12)
+        ^ g(13)
+        ^ g(14)
+        ^ g(17)
+        ^ g(18)
+        ^ g(20)
+        ^ g(23);
+    let computed_d26 = d_star_30
+        ^ g(2)
+        ^ g(3)
+        ^ g(4)
+        ^ g(6)
+        ^ g(7)
+        ^ g(11)
+        ^ g(12)
+        ^ g(13)
+        ^ g(14)
+        ^ g(15)
+        ^ g(18)
+        ^ g(19)
+        ^ g(21)
+        ^ g(24);
+    let computed_d27 = d_star_29
+        ^ g(1)
+        ^ g(3)
+        ^ g(4)
+        ^ g(5)
+        ^ g(7)
+        ^ g(8)
+        ^ g(12)
+        ^ g(13)
+        ^ g(14)
+        ^ g(15)
+        ^ g(16)
+        ^ g(19)
+        ^ g(20)
+        ^ g(22);
+    let computed_d28 = d_star_30
+        ^ g(2)
+        ^ g(4)
+        ^ g(5)
+        ^ g(6)
+        ^ g(8)
+        ^ g(9)
+        ^ g(13)
+        ^ g(14)
+        ^ g(15)
+        ^ g(16)
+        ^ g(17)
+        ^ g(20)
+        ^ g(21)
+        ^ g(23);
+    let computed_d29 = d_star_30
+        ^ g(1)
+        ^ g(3)
+        ^ g(5)
+        ^ g(6)
+        ^ g(7)
+        ^ g(9)
+        ^ g(10)
+        ^ g(14)
+        ^ g(15)
+        ^ g(16)
+        ^ g(17)
+        ^ g(18)
+        ^ g(21)
+        ^ g(22)
+        ^ g(24);
+    let computed_d30 = d_star_29
+        ^ g(3)
+        ^ g(5)
+        ^ g(6)
+        ^ g(8)
+        ^ g(9)
+        ^ g(10)
+        ^ g(11)
+        ^ g(13)
+        ^ g(15)
+        ^ g(19)
+        ^ g(22)
+        ^ g(23)
+        ^ g(24);
+
+    let received = [word[24], word[25], word[26], word[27], word[28], word[29]];
+    let computed = [
+        computed_d25,
+        computed_d26,
+        computed_d27,
+        computed_d28,
+        computed_d29,
+        computed_d30,
+    ];
+
+    if received == computed { Some(d) } else { None }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Строит корректное (parity-valid) слово из 24 информационных бит и
+    /// `D*29/D*30` предыдущего слова, для использования в тестах.
+    #[allow(clippy::too_many_lines)]
+    fn build_valid_word(
+        d: [bool; 24],
+        prev: (bool, bool),
+    ) -> [bool; 30] {
+        let (d_star_29, d_star_30) = prev;
+        let g = |k: usize| d[k - 1];
+
+        let d25 = d_star_29
+            ^ g(1)
+            ^ g(2)
+            ^ g(3)
+            ^ g(5)
+            ^ g(6)
+            ^ g(10)
+            ^ g(11)
+            ^ g(12)
+            ^ g(13)
+            ^ g(14)
+            ^ g(17)
+            ^ g(18)
+            ^ g(20)
+            ^ g(23);
+        let d26 = d_star_30
+            ^ g(2)
+            ^ g(3)
+            ^ g(4)
+            ^ g(6)
+            ^ g(7)
+            ^ g(11)
+            ^ g(12)
+            ^ g(13)
+            ^ g(14)
+            ^ g(15)
+            ^ g(18)
+            ^ g(19)
+            ^ g(21)
+            ^ g(24);
+        let d27 = d_star_29
+            ^ g(1)
+            ^ g(3)
+            ^ g(4)
+            ^ g(5)
+            ^ g(7)
+            ^ g(8)
+            ^ g(12)
+            ^ g(13)
+            ^ g(14)
+            ^ g(15)
+            ^ g(16)
+            ^ g(19)
+            ^ g(20)
+            ^ g(22);
+        let d28 = d_star_30
+            ^ g(2)
+            ^ g(4)
+            ^ g(5)
+            ^ g(6)
+            ^ g(8)
+            ^ g(9)
+            ^ g(13)
+            ^ g(14)
+            ^ g(15)
+            ^ g(16)
+            ^ g(17)
+            ^ g(20)
+            ^ g(21)
+            ^ g(23);
+        let d29 = d_star_30
+            ^ g(1)
+            ^ g(3)
+            ^ g(5)
+            ^ g(6)
+            ^ g(7)
+            ^ g(9)
+            ^ g(10)
+            ^ g(14)
+            ^ g(15)
+            ^ g(16)
+            ^ g(17)
+            ^ g(18)
+            ^ g(21)
+            ^ g(22)
+            ^ g(24);
+        let d30 = d_star_29
+            ^ g(3)
+            ^ g(5)
+            ^ g(6)
+            ^ g(8)
+            ^ g(9)
+            ^ g(10)
+            ^ g(11)
+            ^ g(13)
+            ^ g(15)
+            ^ g(19)
+            ^ g(22)
+            ^ g(23)
+            ^ g(24);
+
+        // Передаваемое слово на проводе НЕ инвертировано относительно d,
+        // если D * 30 (предыдущего слова) = false; если D * 30 = true, то
+        // переданные информационные биты есть d ⊕ true (инверсия), так как
+        // приёмник восстанавливает d через Di ⊕ D * 30.
+        let mut wire = [false; 30];
+
+        for (i, &bit) in d.iter().enumerate() {
+            wire[i] = bit ^ d_star_30;
+        }
+
+        wire[24] = d25;
+        wire[25] = d26;
+        wire[26] = d27;
+        wire[27] = d28;
+        wire[28] = d29;
+        wire[29] = d30;
+
+        wire
+    }
 
     #[test]
     fn test_synchromizer_not_ready_before_threshold() {
@@ -389,5 +647,93 @@ mod tests {
         }
 
         assert!(emitted_at.is_some());
+    }
+
+    #[test]
+    fn test_parity_accepts_valid_word_no_inversion() {
+        let d = [false; 24];
+        let word = build_valid_word(d, (false, false));
+        let result = check_and_correct_parity(&word, (false, false));
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), d);
+    }
+
+    #[test]
+    fn test_parity_accepts_valid_word_with_pattern() {
+        let mut d = [false; 24];
+        for (i, val) in d.iter_mut().enumerate() {
+            *val = i % 3 == 0;
+        }
+
+        let word = build_valid_word(d, (true, false));
+        let result = check_and_correct_parity(&word, (true, false));
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), d);
+    }
+
+    #[test]
+    fn test_parity_handles_inversion_when_prev_d30_is_true() {
+        let mut d = [false; 24];
+
+        d[0] = true;
+        d[5] = true;
+        d[12] = true;
+
+        let prev = (false, true); // D * 30 = true -> инверсия применена
+        let word = build_valid_word(d, prev);
+        let result = check_and_correct_parity(&word, prev);
+
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap(),
+            d,
+            "decoded bits must match original after de-inversion"
+        );
+    }
+
+    #[test]
+    fn test_parity_rejects_corrupted_word() {
+        let d = [true; 24];
+        let mut word = build_valid_word(d, (false, false));
+
+        word[3] = !word[3]; // искажаем один информационный бит
+
+        let result = check_and_correct_parity(&word, (false, false));
+
+        assert!(result.is_none(), "corrupted word should fail parity");
+    }
+
+    #[test]
+    fn test_parity_rejects_corrupted_parity_bit() {
+        let d = [false; 24];
+        let mut word = build_valid_word(d, (false, false));
+
+        word[27] = !word[27]; // поврежден D28
+
+        let result = check_and_correct_parity(&word, (false, false));
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parity_wrong_prev_bits_causes_mismatch() {
+        let d = [true, false]
+            .iter()
+            .cycle()
+            .take(24)
+            .copied()
+            .collect::<Vec<_>>();
+        let mut d_arr = [false; 24];
+
+        d_arr.copy_from_slice(&d);
+
+        let word = build_valid_word(d_arr, (false, false));
+
+        // Проверка с НЕПРАВИЛЬНЫМИ предыдущими битами -> должна завершиться неудачно.
+        let result = check_and_correct_parity(&word, (true, true));
+
+        assert!(result.is_none());
     }
 }
