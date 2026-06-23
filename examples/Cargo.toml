@@ -24,6 +24,22 @@ path = "src/pll_down_tracking.rs"
 name = "pll_step_response"
 path = "src/pll_step_response.rs"
 
+[[bin]]
+name = "channel_single"
+path = "src/channel_single.rs"
+
+[[bin]]
+name = "channel_bank_basic"
+path = "src/channel_bank_basic.rs"
+
+[[bin]]
+name = "channel_lock_recovery"
+path = "src/channel_lock_recovery.rs"
+
+[[bin]]
+name = "channel_mass_32"
+path = "src/channel_mass_32.rs"
+
 [dependencies]
 glrx = { path = ".." }
 

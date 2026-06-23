@@ -9,9 +9,59 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
-- **carrier tracking (PLL/FLL)** сразу после пункта про FLL-assisted PLL contour:
-- Issue #GLRX-8 completed: robust FLL acquisition path for large initial Doppler
-  errors
+- **examples**:
+  - добавил новые примеры для проверки логики работы `channel.rs`:
+  - `channel_bank_basic.rs`, `channel_lock_recovery.rs`, `channel_mass_32.rs` и
+    `channel_single.rs`
+- **Абстракция каналов и многоканальное сопровождение (полная реализация)**
+  - Реализована полноценная абстракция tracking-канала для параллельного сопровождения
+    нескольких спутников:
+    - `TrackingChannel { prn, pll, dll, fll, cn0_estimator, state }`
+    - Жёсткое разделение ответственности между FLL, PLL, DLL и оркестратором канала
+  - Добавлен слой оркестрации `ChannelBank`:
+    - Аллокация каналов из результатов acquisition (`allocate(&AcquisitionResult)`)
+    - Автоматическое управление слотами и переиспользование
+    - Детерминированное освобождение через `reap_lost()` при потере lock
+  - Добавлена конфигурируемая многоканальность:
+    - Поддержка конфигураций 8 / 16 / 32 канала через `ChannelBankConfig::num_channels`
+    - Проверена стабильная работа под полной нагрузкой (до 32 каналов одновременно)
+  - Добавлена параллельная обработка каналов:
+    - `update_all()` с условной поддержкой Rayon (`par_iter_mut`)
+    - Гарантирована безопасность параллелизма за счёт изоляции состояния каналов
+  - Добавлены метрики на уровне каналов и банка:
+    - `active_channels`
+    - `phase_locked_channels`
+    - `lock_time_per_prn_ms`
+    - модель времени `allocated_at_epoch → phase_locked_at_epoch`
+  - Добавлен независимый оценщик C/N₀:
+    - `Cn0Estimator` отделён от логики PLL lock detector
+    - Используется для метрик качества сигнала и внешней логики принятия решений
+  - Добавлена acquisition-driven инициализация:
+    - DLL инициализируется из prompt/code phase после acquisition
+    - FLL инициализируется напрямую из оценённого Doppler
+    - PLL создаётся лениво только после условия готовности FLL
+- **Рефакторинг архитектуры FLL/PLL (жёсткое разделение ответственности)**
+  - Полностью вынесена логика FLL из `pll.rs` в отдельный модуль `fll.rs`
+  - Удалены все FLL-ответственности из PLL:
+    - Убран `PllState::FllLock`
+    - Удалён `step_fll()` из PLL
+    - Удалён дублирующий FLL discriminator
+    - Убраны FLL-специфичные параметры из `PllConfig`
+  - PLL теперь строго фазовый трекинг-контур:
+    - Состояния: `Searching / PllLock / LockLost`
+    - Без логики частотного захвата внутри
+  - Введён явный контракт передачи управления:
+    - `Fll::complete_handoff() -> f64` возвращает стабилизированную частоту
+    - PLL инициализируется только после FLL или acquisition
+- **Реструктуризация tracking-модуля**
+  - Добавлен `channel.rs` как основной слой оркестрации многоканального трекинга
+  - Обновлён `tracking/mod.rs`:
+    - Управление жизненным циклом ChannelBank
+    - Единый pipeline FLL → PLL → DLL
+  - Исключены циклические зависимости между FLL/PLL/DLL/channel
+- **carrier tracking (PLL/FLL) — расширение и стабилизация FLL acquisition path**
+  - Issue #GLRX-8 completed: robust FLL acquisition path for large initial Doppler
+    errors
   - Added free-function cross-product discriminator:
     `cross_product_discriminator(prev, curr, period_s) -> f64`
   - Added explicit FLL → PLL handoff API:
@@ -74,6 +124,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- **examples**:
+  - изменил примеры под новую логику `pll` после рефакторинга:
+    - `pll_down_tracking` и `pll_up_tracking`
+- Упрощена модель работы PLL:
+  - Убран гибридный FLL/PLL state machine
+  - PLL стартует только с известной частотой
+  - Устранены скачки частоты при переходах
+- Изменена модель жизненного цикла каналов:
+  - Теперь управление идёт через канал, а не через отдельные контуры
+  - Каждый канал содержит полный стек: FLL + PLL + DLL + метрики
+- Переработан pipeline обновления:
+  - `TrackingChannel::step_frequency_or_phase()` стал единым входом управления
+  - FLL → готовность → создание PLL → дальнейшее сопровождение
+- Унифицирована модель параллельного выполнения:
+  - Общая логика для single-thread и Rayon режимов
 - FLL now narrows bandwidth automatically after consecutive stable epochs and
   preserves loop continuity during wide → narrow transition
 - FLL handoff to PLL is now explicit and deterministic through
@@ -90,6 +155,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- Убрано дублирование FLL внутри PLL (источник неконсистентного Doppler-схождения)
+- Исправлена несогласованность между Doppler acquisition и PLL инициализацией
+- Исправлен баг повторного использования канала с сохранением старого состояния
+  lock
+- Развязаны PLL lock detector и C/N₀ estimator (устранено ложное влияние)
+- Стабилизирована работа многоканального режима под нагрузкой до 32 каналов
+- Исправлен расчёт `lock_time_ms` (переведён на явное epoch-based измерение)
 - Исправлена формула обновления интегратора в DLL: `e · T / τ₁` вместо
   `e · T · τ₁`.
 - Приведены комментарии и тесты петлевого фильтра в соответствие с формулами трекинга.
