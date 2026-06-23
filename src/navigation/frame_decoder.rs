@@ -103,6 +103,22 @@ pub struct BitAccumulator {
     negative_count: u32,
 }
 
+/// Разобранное HOW-слово (второе слово subframe).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HowWord {
+    /// TOW count: время начала **следующего** subframe в единицах 6 секунд.
+    pub tow_count: u32,
+
+    /// Номер subframe (1–5).
+    pub subframe_id: u8,
+
+    /// Флаг "alert" (бит 18 информационной части HOW).
+    pub alert_flag: bool,
+
+    /// Флаг "anti-spoof" (бит 19 информационной части HOW).
+    pub anti_spoof_flag: bool,
+}
+
 impl BitSynchronizer {
     /// Создаёт синхронизатор с заданным минимальным числом эпох для
     /// принятия решения о фазе границы (рекомендуется >= 200, то есть
@@ -387,6 +403,34 @@ pub fn check_and_correct_parity(
 #[must_use]
 pub fn matches_tlm_preamble(word_start: &[bool]) -> bool {
     word_start.len() >= 8 && word_start[..8] == TLM_PREAMBLE
+}
+
+/// Разбирает 24 информационных бита HOW-слова (уже после parity-коррекции).
+///
+/// Формат (биты 1-24 информационной части HOW, согласно ICD-200):
+/// - биты 1–17: TOW count
+/// - бит 18: alert flag
+/// - бит 19: anti-spoof flag
+/// - биты 20–22: subframe ID
+/// - биты 23–24: зарезервированы / parity-вспомогательные (не используются)
+#[must_use]
+pub fn parse_how_word(info_bits: &[bool; 24]) -> HowWord {
+    let tow_count = bits_to_u32(&info_bits[0..17]);
+    let alert_flag = info_bits[17];
+    let anti_spoof_flag = info_bits[18];
+    let subframe_id = bits_to_u32(&info_bits[19..22]) as u8;
+
+    HowWord {
+        tow_count,
+        subframe_id,
+        alert_flag,
+        anti_spoof_flag,
+    }
+}
+
+/// Преобразует слайс бит (MSB первым) в `u32`.
+fn bits_to_u32(bits: &[bool]) -> u32 {
+    bits.iter().fold(0u32, |acc, &b| (acc << 1) | u32::from(b))
 }
 
 #[cfg(test)]
@@ -755,7 +799,7 @@ mod tests {
         bits[6] = true;
         bits[7] = true;
 
-        // 1 0 0 0 1 0 1 1 → matches TLM_PREAMBLE
+        // 1 0 0 0 1 0 1 1 → соответствует TLM_PREAMBLE
         assert!(matches_tlm_preamble(&bits));
     }
 
@@ -780,5 +824,54 @@ mod tests {
         bits[3] = true; // ломаем 4-й бит
 
         assert!(!matches_tlm_preamble(&bits));
+    }
+
+    #[test]
+    fn test_how_word_extracts_subframe_id() {
+        let mut info = [false; 24];
+
+        // subframe_id = 3 → биты 19,20,21 (индексирован 0) = 0,1,1
+        info[19] = false;
+        info[20] = true;
+        info[21] = true;
+
+        let how = parse_how_word(&info);
+
+        assert_eq!(how.subframe_id, 3);
+    }
+
+    #[test]
+    fn test_how_word_extracts_tow_count() {
+        let mut info = [false; 24];
+
+        // TOW = 5 → двоичный 00000000000000101 по битам [0..17]
+        info[14] = true;
+        info[15] = false;
+        info[16] = true;
+
+        // 5 = 0b101 → последние три бита 17-битного поля
+        let how = parse_how_word(&info);
+
+        assert_eq!(how.tow_count, 5);
+    }
+
+    #[test]
+    fn test_how_word_extracts_alert_and_antispoof_flags() {
+        let mut info = [false; 24];
+
+        info[17] = true; // alert
+        info[18] = false; // anti-spoof
+
+        let how = parse_how_word(&info);
+
+        assert!(how.alert_flag);
+        assert!(!how.anti_spoof_flag);
+    }
+
+    #[test]
+    fn test_bits_to_u32_msb_first() {
+        let bits = [true, false, true]; // 0b101 = 5
+
+        assert_eq!(bits_to_u32(&bits), 5);
     }
 }
