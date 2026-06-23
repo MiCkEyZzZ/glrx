@@ -280,7 +280,6 @@ impl TrackingChannel {
         self.total_epochs += 1;
 
         let dll_out = self.dll.update(epl);
-
         self.cn0_estimator.push(epl.prompt);
 
         let (fll_out, pll_out) = self.step_frequency_or_phase(epl.prompt);
@@ -357,7 +356,6 @@ impl TrackingChannel {
                     ChannelState::PhaseLock
                 }
                 PllState::LockLost => ChannelState::LockLost,
-                _ => ChannelState::FrequencyLock,
             },
             (None, _) => match self.fll.state() {
                 FllState::Searching | FllState::FllLock => ChannelState::FrequencyLock,

@@ -1,39 +1,62 @@
-use glrx::tracking::pll::{Pll, PllState};
+use glrx::tracking::pll::{LockDetectorConfig, Pll, PllConfig, PllState};
 use num_complex::Complex32;
 
 fn main() {
     env_logger::init();
 
     let mut pll = Pll::new(
-        glrx::tracking::pll::PllConfig {
-            pll_bandwidth_hz: 18.0,
-            fll_bandwidth_hz: 120.0,
+        PllConfig {
+            bandwidth_hz: 18.0,
             integration_ms: 1,
-            fll_to_pll_stable_epochs: 5,
-            fll_stable_threshold_hz: 20.0,
-            ..Default::default()
+            lock_detector: LockDetectorConfig {
+                window_size: 50,
+                phase_std_threshold_rad: 0.6,
+                cn0_threshold_db_hz: 30.0,
+                min_samples: 10,
+            },
+            output_clamp_hz: 5000.0,
         },
-        1000.0, // initial Doppler
+        1000.0, // Doppler после acquisition/FLL
     );
 
-    println!("=== ТЕСТ ВОСХОДЯЩЕГО ДРЕЙФА PLL ===");
+    println!("=== PLL ASCENDING DRIFT TEST ===");
+
+    let mut lock_reported = false;
 
     for epoch in 0..120 {
-        // имитация сигнала: небольшая фазовая ошибка + дрейф вверх
-        let phase_noise = 0.05;
-        let prompt = Complex32::new(1.0, 0.1 + phase_noise * ((epoch as f32) * 0.02).sin());
+        // Медленно меняющаяся фазовая ошибка.
+        let phase_noise = 0.05_f32;
+        let phase_offset = 0.1 + phase_noise * (epoch as f32 * 0.02).sin();
+
+        let prompt = Complex32::new(1.0, phase_offset);
 
         let out = pll.update(prompt);
 
         println!(
-            "эпоха={:03} состояние={:?} частота={:10.3} ошибка={:.6}",
+            "epoch={:03} state={:?} freq={:10.3} Hz phase_err={:+.6} rad",
             epoch, out.state, out.carrier_freq_hz, out.discriminator_output
         );
 
-        if out.state == PllState::PllLock && epoch > 10 {
-            println!("→ ЗАХВАТ PLL ВЫПОЛНЕН");
+        if !lock_reported && out.state == PllState::PllLock {
+            println!("→ PLL LOCK ACQUIRED");
+            lock_reported = true;
+        }
+
+        if out.state == PllState::LockLost {
+            println!("→ PLL LOCK LOST");
+            break;
         }
     }
 
-    println!("\nконечная частота: {:.3} Гц", pll.carrier_freq_hz());
+    println!();
+    println!("Final frequency: {:.3} Hz", pll.carrier_freq_hz());
+
+    let metrics = pll.benchmark_metrics();
+
+    println!("Time to lock: {:?} ms", metrics.time_to_lock_ms);
+    println!(
+        "Phase std deviation: {:.6} rad",
+        metrics.steady_state_phase_error_rad
+    );
+    println!("C/N0 estimate: {:?} dB-Hz", metrics.cn0_db_hz);
 }
