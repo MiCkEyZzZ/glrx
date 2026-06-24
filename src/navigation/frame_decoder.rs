@@ -133,7 +133,7 @@ pub enum FrameDecodeError {
 #[derive(Debug, Clone)]
 pub struct BitSynchronizer {
     /// Счётчики переходов внутри предполагаемого бита для каждой фазы
-    transition_counts: [u32; EPOCHS_PER_BIT],
+    transition_counts: [u64; EPOCHS_PER_BIT],
 
     /// Общее число проданных 1-мс эпох (для нормализации и решения о
     /// готовности)
@@ -1610,5 +1610,17 @@ mod tests {
         }
 
         assert_eq!(acc.push(1), Some(true));
+    }
+
+    #[test]
+    fn test_synchronizer_transition_counts_do_not_wrap_quickly() {
+        let mut sync = BitSynchronizer::new(1);
+
+        for _ in 0..10_000 {
+            sync.push_prompt_sign(1);
+        }
+
+        assert!(sync.is_ready());
+        assert!(sync.detected_bit_boundary_phase().is_some());
     }
 }
