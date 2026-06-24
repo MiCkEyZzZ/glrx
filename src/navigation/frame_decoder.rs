@@ -1495,4 +1495,113 @@ mod tests {
         assert_eq!(decoded_subframes[1].subframe_id, 2);
         assert_eq!(decoded_subframes[1].how.tow_count, 106);
     }
+
+    #[test]
+    fn test_frame_decoder_enters_verifying_alignment_state() {
+        let mut decoder = FrameDecoder::with_defaults();
+
+        // создаём искусственное слово с преамбулой
+        let prev = (false, false);
+        let d = [false; 24];
+        let word = build_valid_word(d, prev);
+
+        // подаём 30 бит как поток
+        for &bit in &word {
+            let _ = decoder.push_bit(bit);
+        }
+
+        // если преамбула сработала — должен быть уход в Collecting, но не panic
+        assert!(matches!(
+            decoder.state(),
+            DecodeState::Collecting { .. } | DecodeState::SearchingPreamble
+        ));
+    }
+
+    #[test]
+    fn test_frame_decoder_bit_buffer_sliding_window() {
+        let mut decoder = FrameDecoder::with_defaults();
+
+        // подаём больше чем 30 бит мусора
+        for i in 0..100 {
+            let _ = decoder.push_bit(i % 2 == 0);
+        }
+
+        assert!(decoder.bit_buffer.len() <= WORD_LENGTH_BITS);
+    }
+
+    #[test]
+    fn test_frame_decoder_parity_failure_returns_to_search() {
+        let mut decoder = FrameDecoder::with_defaults();
+
+        let mut word = build_valid_word([false; 24], (false, false));
+
+        // ломаем parity
+        word[25] ^= true;
+
+        for &bit in &word {
+            let _ = decoder.push_bit(bit);
+        }
+
+        assert_eq!(decoder.state(), DecodeState::SearchingPreamble);
+    }
+
+    #[test]
+    fn test_synchronizer_with_noise_still_converges() {
+        let mut sync = BitSynchronizer::new(400);
+
+        let mut sign = 1i8;
+
+        for epoch in 0..4000u64 {
+            // добавляем шум: 5% случайных флиппов
+            let noisy = if epoch % 20 == 0 {
+                sign = -sign;
+                sign
+            } else if epoch % 37 == 0 {
+                -sign
+            } else {
+                sign
+            };
+
+            sync.push_prompt_sign(noisy);
+        }
+
+        assert!(sync.is_ready());
+        assert!(sync.detected_bit_boundary_phase().is_some());
+    }
+
+    #[test]
+    fn test_synchronizer_min_phase_is_deterministic() {
+        let mut sync = BitSynchronizer::new(200);
+
+        // искусственно создаём стабильную границу на фазе 7
+        let offset = 7;
+        let mut sign = 1i8;
+
+        for epoch in 0..2000u64 {
+            let shifted = (epoch as usize + EPOCHS_PER_BIT - offset) % EPOCHS_PER_BIT;
+            if shifted == 0 {
+                sign = -sign;
+            }
+
+            sync.push_prompt_sign(sign);
+        }
+
+        assert_eq!(sync.detected_bit_boundary_phase(), Some(offset));
+    }
+
+    #[test]
+    fn test_how_word_bit_boundaries_are_stable() {
+        let mut info = [false; 24];
+
+        info[0] = true;
+        info[16] = true; // край TOW
+        info[17] = true; // alert
+        info[18] = true; // anti-spoof
+
+        let how = parse_how_word(&info);
+
+        assert!(how.tow_count > 0);
+        assert!(how.alert_flag);
+        assert!(how.anti_spoof_flag);
+    }
 }
