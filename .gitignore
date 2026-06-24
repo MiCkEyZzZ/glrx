@@ -21,3 +21,5 @@ out/
 # Other
 ROADMAP.md
 utils
+nav_data.rs
+ephemeris.rs
