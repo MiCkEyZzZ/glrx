@@ -62,8 +62,6 @@
 //! `Di = di ⊕ D*30` для `i = 1..24`. Уравнения parity (XOR-суммы
 //! подмножеств бит) взяты из GPS ICD-200 / IS-GPS-200.
 
-use std::collections::VecDeque;
-
 /// Число 1-мс эпох в одном навигационном бите GPS L1 C/A.
 pub const EPOCHS_PER_BIT: usize = 20;
 
@@ -204,6 +202,13 @@ pub struct FrameDecoderStats {
     pub full_resyncs: u64,
 }
 
+/// Скользящий буфер 30 бит на стеке, без аллокаций.
+#[derive(Debug, Clone, Default)]
+struct BitWindow {
+    bits: u32,
+    len: u8,
+}
+
 /// Битовая синхронизация + определение кадров для GPS L1 C/A
 /// навигационного сообщения.
 ///
@@ -217,7 +222,7 @@ pub struct FrameDecoderStats {
 /// для проверки parity первого слова) проверяется на совпадение `0x8B`
 pub struct FrameDecoder {
     state: DecodeState,
-    bit_buffer: VecDeque<bool>,
+    bit_buffer: BitWindow,
     prev_d29_d30: (bool, bool),
     current_words: Vec<[bool; 24]>,
     retry: RetryPolicy,
@@ -374,7 +379,7 @@ impl FrameDecoder {
     pub fn new(retry: RetryPolicy) -> Self {
         Self {
             state: DecodeState::SearchingPreamble,
-            bit_buffer: VecDeque::with_capacity(SUBFRAME_LENGTH_BITS),
+            bit_buffer: BitWindow::default(),
             prev_d29_d30: (false, false),
             current_words: Vec::with_capacity(WORDS_PER_SUBFRAME),
             retry,
@@ -427,26 +432,19 @@ impl FrameDecoder {
         &mut self,
         bit: bool,
     ) -> Result<Option<DecodedSubframe>, FrameDecodeError> {
-        self.bit_buffer.push_back(bit);
+        self.bit_buffer.push(bit);
 
-        if self.bit_buffer.len() < WORD_LENGTH_BITS {
+        if !self.bit_buffer.is_full() {
             return Ok(None);
         }
 
-        if self.bit_buffer.len() > WORD_LENGTH_BITS {
-            self.bit_buffer.pop_front();
-        }
-
-        let window: Vec<bool> = self.bit_buffer.iter().copied().collect();
         let d_star_30 = self.prev_d29_d30.1;
-        let preamble_matches = window
-            .iter()
-            .take(8)
-            .enumerate()
-            .all(|(i, &b)| (b ^ d_star_30) == TLM_PREAMBLE[i]);
+        let preamble_matches =
+            (0..8).all(|i| (self.bit_buffer.get(i) ^ d_star_30) == TLM_PREAMBLE[i]);
 
         if preamble_matches {
             self.state = DecodeState::VerifyingAlignment { offset: 0 };
+
             return self.try_verify_current_word();
         }
 
@@ -457,14 +455,10 @@ impl FrameDecoder {
         &mut self,
         bit: bool,
     ) -> Result<Option<DecodedSubframe>, FrameDecodeError> {
-        self.bit_buffer.push_back(bit);
+        self.bit_buffer.push(bit);
 
-        if self.bit_buffer.len() < WORD_LENGTH_BITS {
+        if !self.bit_buffer.is_full() {
             return Ok(None);
-        }
-
-        if self.bit_buffer.len() > WORD_LENGTH_BITS {
-            self.bit_buffer.pop_front();
         }
 
         self.try_verify_current_word()
@@ -473,25 +467,28 @@ impl FrameDecoder {
     /// Пытается проверить parity полного слова, находящегося сейчас в
     /// `bit_buffer` (ровно 30 бит).
     fn try_verify_current_word(&mut self) -> Result<Option<DecodedSubframe>, FrameDecodeError> {
-        if self.bit_buffer.len() != WORD_LENGTH_BITS {
+        if !self.bit_buffer.is_full() {
             return Ok(None);
         }
 
-        let mut word = [false; WORD_LENGTH_BITS];
-        for (i, b) in self.bit_buffer.iter().enumerate() {
-            word[i] = *b;
-        }
+        let word = self.bit_buffer.to_word();
 
         if let Some(info_bits) = check_and_correct_parity(&word, self.prev_d29_d30) {
             self.stats.preambles_confirmed += 1;
+
             self.prev_d29_d30 = (word[28], word[29]);
+
             self.current_words.clear();
             self.current_words.push(info_bits);
+
             self.bit_buffer.clear();
+
             self.state = DecodeState::Collecting {
                 bits_collected: WORD_LENGTH_BITS,
             };
+
             self.retries_since_resync = 0;
+
             Ok(None)
         } else {
             self.stats.parity_failures += 1;
@@ -503,31 +500,23 @@ impl FrameDecoder {
         &mut self,
         bit: bool,
     ) -> Result<Option<DecodedSubframe>, FrameDecodeError> {
-        let DecodeState::Collecting { bits_collected } = self.state else {
+        let DecodeState::Collecting { .. } = self.state else {
             unreachable!("step_collecting called outside Collecting state");
         };
 
-        self.bit_buffer.push_back(bit);
-        let new_bits_collected = bits_collected + 1;
+        self.bit_buffer.push(bit);
 
-        if self.bit_buffer.len() < WORD_LENGTH_BITS {
-            self.state = DecodeState::Collecting {
-                bits_collected: new_bits_collected,
-            };
+        if !self.bit_buffer.is_full() {
             return Ok(None);
         }
 
-        // Собрано ровно одно новое слово (30 бит) с момента последнего сброса буфера.
-        let mut word = [false; WORD_LENGTH_BITS];
-        for (i, b) in self.bit_buffer.iter().enumerate() {
-            word[i] = *b;
-        }
-
+        let word = self.bit_buffer.to_word();
         let word_index = self.current_words.len();
 
         if let Some(info_bits) = check_and_correct_parity(&word, self.prev_d29_d30) {
             self.prev_d29_d30 = (word[28], word[29]);
             self.current_words.push(info_bits);
+
             self.bit_buffer.clear();
 
             if self.current_words.len() == WORDS_PER_SUBFRAME {
@@ -535,9 +524,6 @@ impl FrameDecoder {
                 self.reset_for_next_subframe();
                 Ok(Some(subframe))
             } else {
-                self.state = DecodeState::Collecting {
-                    bits_collected: new_bits_collected,
-                };
                 Ok(None)
             }
         } else {
@@ -581,15 +567,12 @@ impl FrameDecoder {
             return Err(FrameDecodeError::PreambleNotFound);
         }
 
-        // Частичный retry: возвращаемся к поиску преамбулы, но сохраняем
-        // часть буфера (сдвиг на 1 бит вместо полной очистки), чтобы не
-        // терять уже накопленные данные при единичном ложном срабатывании.
+        // частичный retry: просто сбрасываем FSM в поиск преамбулы
         self.current_words.clear();
         self.state = DecodeState::SearchingPreamble;
 
-        if !self.bit_buffer.is_empty() {
-            self.bit_buffer.pop_front();
-        }
+        // важно: НЕ трогаем bit_buffer
+        // потому что push() уже делает естественный сдвиг окна
 
         Err(FrameDecodeError::ParityMismatch { word_index })
     }
@@ -601,6 +584,58 @@ impl FrameDecoder {
         self.current_words.clear();
         self.prev_d29_d30 = (false, false);
         self.retries_since_resync = 0;
+    }
+}
+
+impl BitWindow {
+    fn push(
+        &mut self,
+        bit: bool,
+    ) {
+        self.bits <<= 1;
+        self.bits |= u32::from(bit);
+
+        self.bits &= (1u32 << WORD_LENGTH_BITS) - 1;
+
+        if self.len < WORD_LENGTH_BITS as u8 {
+            self.len += 1;
+        }
+    }
+
+    const fn is_full(&self) -> bool {
+        self.len() == WORD_LENGTH_BITS
+    }
+
+    fn to_word(&self) -> [bool; WORD_LENGTH_BITS] {
+        debug_assert!(self.is_full());
+
+        let mut word = [false; WORD_LENGTH_BITS];
+
+        for (i, bit) in word.iter_mut().enumerate() {
+            *bit = self.get(i);
+        }
+
+        word
+    }
+
+    fn get(
+        &self,
+        index: usize,
+    ) -> bool {
+        debug_assert!(index < self.len());
+
+        let shift = self.len() - 1 - index;
+
+        ((self.bits >> shift) & 1) != 0
+    }
+
+    const fn clear(&mut self) {
+        self.bits = 0;
+        self.len = 0;
+    }
+
+    const fn len(&self) -> usize {
+        self.len as usize
     }
 }
 
