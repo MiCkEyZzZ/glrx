@@ -349,7 +349,9 @@ impl BitAccumulator {
     pub const fn new(boundary_phase: usize) -> Self {
         Self {
             boundary_phase,
-            current_phase: 0,
+            // Важно: стартуем уже из найденной фазы границы.
+            // Иначе при boundary_phase = k первое окно будет длиной k эпох.
+            current_phase: boundary_phase,
             positive_count: 0,
             negative_count: 0,
         }
@@ -378,7 +380,6 @@ impl BitAccumulator {
 
         self.current_phase = (self.current_phase + 1) % EPOCHS_PER_BIT;
 
-        // Бит завершён, когда мы вернулись к фазу границы.
         if self.current_phase == self.boundary_phase {
             let bit = self.positive_count >= self.negative_count;
 
@@ -672,7 +673,6 @@ impl BitWindow {
 /// - `Some(d1..d24_corrected)` - 24 информационных бита после применения инверсии `Di = di ⊕ D*30`,
 ///   если все 6 уравнений parity совпали
 /// - `None`, если хотя бы одно уравнение не совпало (слово повреждено).
-#[allow(clippy::too_many_lines)]
 #[must_use]
 pub fn check_and_correct_parity(
     word: &[bool; 30],
@@ -1595,5 +1595,20 @@ mod tests {
         assert!(how.tow_count > 0);
         assert!(how.alert_flag);
         assert!(how.anti_spoof_flag);
+    }
+
+    #[test]
+    fn test_accumulator_first_window_is_full_for_nonzero_boundary_phase() {
+        let mut acc = BitAccumulator::new(5);
+
+        for i in 0..19 {
+            assert_eq!(
+                acc.push(1),
+                None,
+                "must not emit before 20 epochs, step {i}"
+            );
+        }
+
+        assert_eq!(acc.push(1), Some(true));
     }
 }
