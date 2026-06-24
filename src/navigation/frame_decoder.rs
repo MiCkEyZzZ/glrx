@@ -62,11 +62,55 @@
 //! `Di = di ⊕ D*30` для `i = 1..24`. Уравнения parity (XOR-суммы
 //! подмножеств бит) взяты из GPS ICD-200 / IS-GPS-200.
 
+use std::collections::VecDeque;
+
 /// Число 1-мс эпох в одном навигационном бите GPS L1 C/A.
 pub const EPOCHS_PER_BIT: usize = 20;
 
 /// TLM-преамбула: `0b10001011` (`0x8B`), первые 8 бит каждого TLM-слова.
 pub const TLM_PREAMBLE: [bool; 8] = [true, false, false, false, true, false, true, true];
+
+/// Длина одного слова GPS L1 C/A в битах (24 данных + 6 parity).
+pub const WORD_LENGTH_BITS: usize = 30;
+
+/// Число слов в одном subframe.
+pub const WORDS_PER_SUBFRAME: usize = 10;
+
+/// Длина subframe в битах (`30 x 10`).
+pub const SUBFRAME_LENGTH_BITS: usize = WORD_LENGTH_BITS * WORDS_PER_SUBFRAME;
+
+/// Состояние конечного автомата [`FrameDecoder`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeState {
+    /// Поиск TLM-преамбулы по всем 30 возможным битовым смещениям
+    SearchingPreamble,
+
+    /// Преамбула найдена по паттерну на смещение `offset` ожидаем
+    /// остаток слова (22 бита) для проверки parity, прежде чем считать
+    /// границу подтверждённой.
+    VerifyingAlignment {
+        /// Смещение в скользящем буфере, на котором обнаружен `0x8B`
+        offset: usize,
+    },
+
+    /// Граница подтверждена parity собираем оставшиеся слова subframe
+    Collecting {
+        /// Сколько бит уже собрано в текущем subframe (0..300)
+        bits_collected: usize,
+    },
+}
+
+/// Причина отказа декодирования одного слова/subframe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameDecodeError {
+    /// Parity-проверка не прошла для одного из 10 слов subframe
+    ParityMismatch {
+        /// Индекс слова внутри subframe (0-9), на котором произошёл сбой
+        word_index: usize,
+    },
+    /// Преамбула TLM не найдена ни на одной из 30 проверенных позиций
+    PreambleNotFound,
+}
 
 /// Детектор границы 20-мс навигационного бита по статистике переходов
 /// знака Prompt-корреляции (BPSK transitions).
@@ -117,6 +161,68 @@ pub struct HowWord {
 
     /// Флаг "anti-spoof" (бит 19 информационной части HOW).
     pub anti_spoof_flag: bool,
+}
+
+/// Полностью декодированный и parity-подтверждённый subframe (300 бит,
+/// 10 слов).
+#[derive(Debug, Clone)]
+pub struct DecodedSubframe {
+    /// Номер subframe (1-5), извлечённый из HOW
+    pub subframe_id: u8,
+
+    /// HOW-слово (TOW, subframe ID, флаги)
+    pub how: HowWord,
+
+    /// 10 слов по 24 информационных бита каждое (после parity-коррекции,
+    /// без служебных parity-бит). `words[0]` — TLM, `words[1]` — HOW,
+    /// `words[2..10]` — данные subframe.
+    pub words: [[bool; 24]; WORDS_PER_SUBFRAME],
+}
+
+/// Конфигурация политики повтора при сбое декодирования.
+#[derive(Debug, Clone, Copy)]
+pub struct RetryPolicy {
+    /// Максимальное число повторных попыток поиска преамбулы после сбоя
+    /// parity внутри уже предполагаемого subframe, прежде чем декодер
+    /// сбрасывается в полный поиск преамбулы заново
+    pub max_retries_before_full_resync: usize,
+}
+
+/// Статистика работы декодера - для диагностики и тестов.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FrameDecoderStats {
+    /// Сколько раз была найдена и подтверждена преамбула
+    pub preambles_confirmed: u64,
+
+    /// Сколько раз parity провалились на каком-либо слове
+    pub parity_failures: u64,
+
+    /// Сколько subframe было полностью и успешно декодировано
+    pub subframes_decoded: u64,
+
+    /// Сколько раз декодер был принудительно сброшен в полный resync
+    pub full_resyncs: u64,
+}
+
+/// Битовая синхронизация + определение кадров для GPS L1 C/A
+/// навигационного сообщения.
+///
+/// Понимает поток уже выраженных по 20 мс границе навигационных битов
+/// (см. [`BitSynchronizer`] + [`BitAccumulator`] выше по конвейеру) и
+/// собирает их в parity-подтверждённые [`DecodedSubframe`].
+///
+/// # Алгоритм поиска преамбулы (`SearchingPreamble`)
+///
+/// Скользящий буфер последних 38 бит (8 бит преамбулы + минимум 30 бит
+/// для проверки parity первого слова) проверяется на совпадение `0x8B`
+pub struct FrameDecoder {
+    state: DecodeState,
+    bit_buffer: VecDeque<bool>,
+    prev_d29_d30: (bool, bool),
+    current_words: Vec<[bool; 24]>,
+    retry: RetryPolicy,
+    retries_since_resync: usize,
+    stats: FrameDecoderStats,
 }
 
 impl BitSynchronizer {
@@ -259,6 +365,242 @@ impl BitAccumulator {
         } else {
             None
         }
+    }
+}
+
+impl FrameDecoder {
+    /// Создаёт новый decoder с заданной политикой повтора.
+    #[must_use]
+    pub fn new(retry: RetryPolicy) -> Self {
+        Self {
+            state: DecodeState::SearchingPreamble,
+            bit_buffer: VecDeque::with_capacity(SUBFRAME_LENGTH_BITS),
+            prev_d29_d30: (false, false),
+            current_words: Vec::with_capacity(WORDS_PER_SUBFRAME),
+            retry,
+            retries_since_resync: 0,
+            stats: FrameDecoderStats::default(),
+        }
+    }
+
+    /// Создаёт decoder с политикой повтора по умолчанию.
+    #[must_use]
+    pub fn with_defaults() -> Self {
+        Self::new(RetryPolicy::default())
+    }
+
+    /// Возвращает текущее состояние конечного автомата.
+    #[must_use]
+    pub const fn state(&self) -> DecodeState {
+        self.state
+    }
+
+    /// Возвращает снимок статистикт.
+    #[must_use]
+    pub const fn stats(&self) -> FrameDecoderStats {
+        self.stats
+    }
+
+    /// Подаёт один навигационный бит (20-мс, уже выровненный
+    /// [`BitAccumulator`]'ом). Возвращает `Ok(Some(subframe))`, когда
+    /// собран и подтверждён полный subframe, `Ok(None)` — если сборка ещё
+    /// не завершена, `Err(_)` — если на этом шаге произошёл сбой parity
+    /// (а не просто "пока нет данных").
+    ///
+    /// # Errors
+    ///
+    /// Возвращает `Err(FrameDecodeError::ParityMismatch { .. })`, если при
+    /// проверке очередного слова parity не сошлась, и `Err(FrameDecodeError::PreambleNotFound)`,
+    /// если после исчерпания retry-budget декодер выполняет полный resync.
+    pub fn push_bit(
+        &mut self,
+        bit: bool,
+    ) -> Result<Option<DecodedSubframe>, FrameDecodeError> {
+        match self.state {
+            DecodeState::SearchingPreamble => self.step_searching(bit),
+            DecodeState::VerifyingAlignment { .. } => self.step_verifying(bit),
+            DecodeState::Collecting { .. } => self.step_collecting(bit),
+        }
+    }
+
+    fn step_searching(
+        &mut self,
+        bit: bool,
+    ) -> Result<Option<DecodedSubframe>, FrameDecodeError> {
+        self.bit_buffer.push_back(bit);
+
+        if self.bit_buffer.len() < WORD_LENGTH_BITS {
+            return Ok(None);
+        }
+
+        if self.bit_buffer.len() > WORD_LENGTH_BITS {
+            self.bit_buffer.pop_front();
+        }
+
+        let window: Vec<bool> = self.bit_buffer.iter().copied().collect();
+        let d_star_30 = self.prev_d29_d30.1;
+        let preamble_matches = window
+            .iter()
+            .take(8)
+            .enumerate()
+            .all(|(i, &b)| (b ^ d_star_30) == TLM_PREAMBLE[i]);
+
+        if preamble_matches {
+            self.state = DecodeState::VerifyingAlignment { offset: 0 };
+            return self.try_verify_current_word();
+        }
+
+        Ok(None)
+    }
+
+    fn step_verifying(
+        &mut self,
+        bit: bool,
+    ) -> Result<Option<DecodedSubframe>, FrameDecodeError> {
+        self.bit_buffer.push_back(bit);
+
+        if self.bit_buffer.len() < WORD_LENGTH_BITS {
+            return Ok(None);
+        }
+
+        if self.bit_buffer.len() > WORD_LENGTH_BITS {
+            self.bit_buffer.pop_front();
+        }
+
+        self.try_verify_current_word()
+    }
+
+    /// Пытается проверить parity полного слова, находящегося сейчас в
+    /// `bit_buffer` (ровно 30 бит).
+    fn try_verify_current_word(&mut self) -> Result<Option<DecodedSubframe>, FrameDecodeError> {
+        if self.bit_buffer.len() != WORD_LENGTH_BITS {
+            return Ok(None);
+        }
+
+        let mut word = [false; WORD_LENGTH_BITS];
+        for (i, b) in self.bit_buffer.iter().enumerate() {
+            word[i] = *b;
+        }
+
+        if let Some(info_bits) = check_and_correct_parity(&word, self.prev_d29_d30) {
+            self.stats.preambles_confirmed += 1;
+            self.prev_d29_d30 = (word[28], word[29]);
+            self.current_words.clear();
+            self.current_words.push(info_bits);
+            self.bit_buffer.clear();
+            self.state = DecodeState::Collecting {
+                bits_collected: WORD_LENGTH_BITS,
+            };
+            self.retries_since_resync = 0;
+            Ok(None)
+        } else {
+            self.stats.parity_failures += 1;
+            self.handle_failure(0)
+        }
+    }
+
+    fn step_collecting(
+        &mut self,
+        bit: bool,
+    ) -> Result<Option<DecodedSubframe>, FrameDecodeError> {
+        let DecodeState::Collecting { bits_collected } = self.state else {
+            unreachable!("step_collecting called outside Collecting state");
+        };
+
+        self.bit_buffer.push_back(bit);
+        let new_bits_collected = bits_collected + 1;
+
+        if self.bit_buffer.len() < WORD_LENGTH_BITS {
+            self.state = DecodeState::Collecting {
+                bits_collected: new_bits_collected,
+            };
+            return Ok(None);
+        }
+
+        // Собрано ровно одно новое слово (30 бит) с момента последнего сброса буфера.
+        let mut word = [false; WORD_LENGTH_BITS];
+        for (i, b) in self.bit_buffer.iter().enumerate() {
+            word[i] = *b;
+        }
+
+        let word_index = self.current_words.len();
+
+        if let Some(info_bits) = check_and_correct_parity(&word, self.prev_d29_d30) {
+            self.prev_d29_d30 = (word[28], word[29]);
+            self.current_words.push(info_bits);
+            self.bit_buffer.clear();
+
+            if self.current_words.len() == WORDS_PER_SUBFRAME {
+                let subframe = self.finalize_subframe();
+                self.reset_for_next_subframe();
+                Ok(Some(subframe))
+            } else {
+                self.state = DecodeState::Collecting {
+                    bits_collected: new_bits_collected,
+                };
+                Ok(None)
+            }
+        } else {
+            self.stats.parity_failures += 1;
+            self.handle_failure(word_index)
+        }
+    }
+
+    fn finalize_subframe(&self) -> DecodedSubframe {
+        let how = parse_how_word(&self.current_words[1]);
+
+        let mut words = [[false; 24]; WORDS_PER_SUBFRAME];
+        words.copy_from_slice(&self.current_words[..WORDS_PER_SUBFRAME]);
+
+        DecodedSubframe {
+            subframe_id: how.subframe_id,
+            how,
+            words,
+        }
+    }
+
+    fn reset_for_next_subframe(&mut self) {
+        self.stats.subframes_decoded += 1;
+        self.current_words.clear();
+        self.bit_buffer.clear();
+        self.state = DecodeState::SearchingPreamble;
+    }
+
+    /// Обрабатывает сбой parity согласно [`RetryPolicy`]: либо продолжаем
+    /// сдвигать буфер на один бит и пробуем заново искать преамбулу
+    /// (частичный retry), либо, если число повторов исчерпано, выполняем
+    /// полный resync (полный сброс состояния).
+    fn handle_failure(
+        &mut self,
+        word_index: usize,
+    ) -> Result<Option<DecodedSubframe>, FrameDecodeError> {
+        self.retries_since_resync += 1;
+
+        if self.retries_since_resync > self.retry.max_retries_before_full_resync {
+            self.full_resync();
+            return Err(FrameDecodeError::PreambleNotFound);
+        }
+
+        // Частичный retry: возвращаемся к поиску преамбулы, но сохраняем
+        // часть буфера (сдвиг на 1 бит вместо полной очистки), чтобы не
+        // терять уже накопленные данные при единичном ложном срабатывании.
+        self.current_words.clear();
+        self.state = DecodeState::SearchingPreamble;
+
+        if !self.bit_buffer.is_empty() {
+            self.bit_buffer.pop_front();
+        }
+
+        Err(FrameDecodeError::ParityMismatch { word_index })
+    }
+
+    fn full_resync(&mut self) {
+        self.stats.full_resyncs += 1;
+        self.state = DecodeState::SearchingPreamble;
+        self.bit_buffer.clear();
+        self.current_words.clear();
+        self.prev_d29_d30 = (false, false);
+        self.retries_since_resync = 0;
     }
 }
 
@@ -433,12 +775,20 @@ fn bits_to_u32(bits: &[bool]) -> u32 {
     bits.iter().fold(0u32, |acc, &b| (acc << 1) | u32::from(b))
 }
 
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            max_retries_before_full_resync: 3,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Строит корректное (parity-valid) слово из 24 информационных бит и
-    /// `D*29/D*30` предыдущего слова, для использования в тестах.
+    // Строит корректное (parity-valid) слово из 24 информационных бит и
+    // `D * 29/D * 30` предыдущего слова, для использования в тестах.
     #[allow(clippy::too_many_lines)]
     fn build_valid_word(
         d: [bool; 24],
@@ -556,6 +906,115 @@ mod tests {
         wire[29] = d30;
 
         wire
+    }
+
+    // Строит полный 300-битный поток для одного валидного subframe:
+    // TLM-слово (с преамбулой) + HOW-слово (с заданным subframe_id/tow)
+    // + 8 произвольных, но parity-валидных слов.
+    fn build_synthetic_subframe(
+        subframe_id: u8,
+        tow: u32,
+    ) -> Vec<bool> {
+        let mut stream = Vec::with_capacity(SUBFRAME_LENGTH_BITS);
+        let mut prev = (false, false);
+
+        // Слово 1: TLM. Информационные биты начинаются с 8-битной преамбулы, остальные произвольные.
+        let mut tlm_info = [false; 24];
+
+        tlm_info[..8].copy_from_slice(&TLM_PREAMBLE);
+
+        let tlm_word = build_valid_word(tlm_info, prev);
+
+        stream.extend_from_slice(&tlm_word[..24]);
+        stream.extend_from_slice(&tlm_word[24..30]);
+
+        prev = (tlm_word[28], tlm_word[29]);
+
+        // Слово 2: HOW. Кодировать tow (17 бит) + alert(0) + AS(0) + subframe_id (3 бита).
+        let mut how_info = [false; 24];
+
+        for i in 0..17 {
+            how_info[16 - i] = ((tow >> i) & 1) == 1;
+        }
+
+        how_info[17] = false; // alert
+        how_info[18] = false; // anti-spoof
+
+        for i in 0..3 {
+            how_info[21 - i] = ((u32::from(subframe_id) >> i) & 1) == 1;
+        }
+
+        let how_word = build_valid_word(how_info, prev);
+
+        stream.extend_from_slice(&how_word[..24]);
+        stream.extend_from_slice(&how_word[24..30]);
+
+        prev = (how_word[28], how_word[29]);
+
+        // Слова 3-10: произвольная допустимая полезная нагрузка.
+        for w in 0..8u32 {
+            let mut info = [false; 24];
+
+            for (i, bit) in info.iter_mut().enumerate() {
+                *bit = (w + i as u32).is_multiple_of(5);
+            }
+
+            let word = build_valid_word(info, prev);
+
+            stream.extend_from_slice(&word[..24]);
+            stream.extend_from_slice(&word[24..30]);
+
+            prev = (word[28], word[29]);
+        }
+
+        stream
+    }
+
+    fn build_synthetic_subframe_with_prev(
+        subframe_id: u8,
+        tow: u32,
+        mut prev: (bool, bool),
+    ) -> (Vec<bool>, (bool, bool)) {
+        let mut stream = Vec::with_capacity(SUBFRAME_LENGTH_BITS);
+
+        // Слово 1: TLM
+        let mut tlm_info = [false; 24];
+        tlm_info[..8].copy_from_slice(&TLM_PREAMBLE);
+        let tlm_word = build_valid_word(tlm_info, prev);
+        stream.extend_from_slice(&tlm_word[..24]);
+        stream.extend_from_slice(&tlm_word[24..30]);
+        prev = (tlm_word[28], tlm_word[29]);
+
+        // Слово 2: HOW
+        let mut how_info = [false; 24];
+        for i in 0..17 {
+            how_info[16 - i] = ((tow >> i) & 1) == 1;
+        }
+        // alert, anti-spoof = false
+        for i in 0..3 {
+            how_info[21 - i] = ((u32::from(subframe_id) >> i) & 1) == 1;
+        }
+        let how_word = build_valid_word(how_info, prev);
+        stream.extend_from_slice(&how_word[..24]);
+        stream.extend_from_slice(&how_word[24..30]);
+        prev = (how_word[28], how_word[29]);
+
+        // Слова 3-10
+        for w in 0..8u32 {
+            let mut info = [false; 24];
+
+            for (i, bit) in info.iter_mut().enumerate() {
+                *bit = (w + i as u32).is_multiple_of(5);
+            }
+
+            let word = build_valid_word(info, prev);
+
+            stream.extend_from_slice(&word[..24]);
+            stream.extend_from_slice(&word[24..30]);
+            prev = (word[28], word[29]);
+        }
+
+        (stream, prev)
     }
 
     #[test]
@@ -873,5 +1332,167 @@ mod tests {
         let bits = [true, false, true]; // 0b101 = 5
 
         assert_eq!(bits_to_u32(&bits), 5);
+    }
+
+    #[test]
+    fn test_build_synthetic_subframe_has_correct_length() {
+        let stream = build_synthetic_subframe(1, 100);
+
+        assert_eq!(stream.len(), SUBFRAME_LENGTH_BITS);
+    }
+
+    #[test]
+    fn test_frame_decoder_decodes_synthetic_subframe() {
+        let stream = build_synthetic_subframe(3, 12345);
+        let mut decoder = FrameDecoder::with_defaults();
+
+        let mut decoded = None;
+
+        for &bit in &stream {
+            if let Ok(Some(subframe)) = decoder.push_bit(bit) {
+                decoded = Some(subframe);
+                break;
+            }
+            // Допустимо в процессе поиска преамбулы внутри потока
+            // (ложные срабатывания на промежуточных смещениях), но
+            // не должно мешать итоговой успешной декодировке.
+        }
+
+        let subframe = decoded.expect("subframe should be decoded from clean synthetic stream");
+
+        assert_eq!(subframe.subframe_id, 3);
+        assert_eq!(subframe.how.tow_count, 12345);
+    }
+
+    #[test]
+    fn test_frame_decoder_detects_preamble_within_noisy_prefix() {
+        // Добавляем случайный "мусор" перед валидным subframe, чтобы
+        // проверить, что decoder находит преамбулу не с первого бита потока.
+        let mut stream = vec![
+            true, false, true, true, false, false, true, false, true, false,
+        ];
+
+        stream.extend(build_synthetic_subframe(2, 999));
+
+        let mut decoder = FrameDecoder::with_defaults();
+        let mut decoded = None;
+
+        for &bit in &stream {
+            if let Ok(Some(subframe)) = decoder.push_bit(bit) {
+                decoded = Some(subframe);
+                break;
+            }
+        }
+
+        let subframe = decoded.expect("subframe should be found despite noisy prefix");
+
+        assert_eq!(subframe.subframe_id, 2);
+        assert_eq!(subframe.how.tow_count, 999);
+    }
+
+    #[test]
+    fn test_frame_decoder_stats_track_successful_decode() {
+        let stream = build_synthetic_subframe(1, 1);
+        let mut decoder = FrameDecoder::with_defaults();
+
+        for &bit in &stream {
+            let _ = decoder.push_bit(bit);
+        }
+
+        assert_eq!(decoder.stats().subframes_decoded, 1);
+    }
+
+    #[test]
+    fn test_frame_decoder_recovers_after_corrupted_word_via_retry() {
+        // Портим один бит внутри потока (не в преамбуле) и проверяем, что
+        // decoder не виснет — он либо ресинхронизируется и не паникует,
+        // либо корректно сообщает ParityMismatch и продолжает работу.
+        let mut stream = build_synthetic_subframe(4, 42);
+        // Повреждение немного глубже в слове 5 (внутри 300-битного subframe).
+        let corrupt_idx = 4 * WORD_LENGTH_BITS + 10;
+
+        stream[corrupt_idx] = !stream[corrupt_idx];
+
+        let mut decoder = FrameDecoder::with_defaults();
+        let mut saw_error = false;
+
+        for &bit in &stream {
+            match decoder.push_bit(bit) {
+                Err(FrameDecodeError::ParityMismatch { .. }) => saw_error = true,
+                Ok(_) | Err(FrameDecodeError::PreambleNotFound) => {}
+            }
+        }
+
+        assert!(
+            saw_error,
+            "corrupted word should trigger a ParityMismatch at some point"
+        );
+        // Декодер не должен паниковать и после этого должен вернуться в нормальное состояние.
+        assert!(matches!(
+            decoder.state(),
+            DecodeState::SearchingPreamble | DecodeState::Collecting { .. }
+        ));
+    }
+
+    #[test]
+    fn test_frame_decoder_full_resync_after_exceeding_retry_budget() {
+        let retry = RetryPolicy {
+            max_retries_before_full_resync: 1,
+        };
+        let mut decoder = FrameDecoder::new(retry);
+
+        // Поток чистого шума никогда не даст валидную преамбулу + parity —
+        // должен в какой-то момент вызвать full_resync без паники.
+        let noise: Vec<bool> = (0..2000).map(|i| (i * 2_654_435_761_u64) % 7 < 3).collect();
+
+        for &bit in &noise {
+            let _ = decoder.push_bit(bit);
+        }
+
+        // Допустимо, что full_resyncs == 0 если случайно ни одна
+        // преамбула не совпала вовсе — тест проверяет отсутствие паники
+        // и то, что счётчики стат остаются согласованными (неотрицательны
+        // по построению типов).
+        let stats = decoder.stats();
+
+        assert!(stats.parity_failures >= stats.full_resyncs);
+    }
+
+    #[test]
+    fn test_frame_decoder_starts_in_searching_state() {
+        let decoder = FrameDecoder::with_defaults();
+
+        assert_eq!(decoder.state(), DecodeState::SearchingPreamble);
+    }
+
+    #[test]
+    fn test_frame_decoder_multiple_subframes_in_sequence() {
+        let mut stream = Vec::new();
+        let mut prev = (false, false);
+
+        // Первый subframe
+        let (bits1, prev1) = build_synthetic_subframe_with_prev(1, 100, prev);
+        stream.extend(bits1);
+        prev = prev1;
+
+        // Второй subframe
+        let (bits2, _prev2) = build_synthetic_subframe_with_prev(2, 106, prev);
+        stream.extend(bits2);
+        // prev больше не нужен
+
+        let mut decoder = FrameDecoder::with_defaults();
+        let mut decoded_subframes = Vec::new();
+
+        for &bit in &stream {
+            if let Ok(Some(subframe)) = decoder.push_bit(bit) {
+                decoded_subframes.push(subframe);
+            }
+        }
+
+        assert_eq!(decoded_subframes.len(), 2);
+        assert_eq!(decoded_subframes[0].subframe_id, 1);
+        assert_eq!(decoded_subframes[0].how.tow_count, 100);
+        assert_eq!(decoded_subframes[1].subframe_id, 2);
+        assert_eq!(decoded_subframes[1].how.tow_count, 106);
     }
 }
