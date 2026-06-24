@@ -58,8 +58,10 @@ glrx
 │   │   ├── mod.rs
 │   │   └── verifier.rs
 │   ├── navigation                 # navigation
+│   │   ├── ephemeris.rs
 │   │   ├── frame_decoder.rs
-│   │   └── mod.rs
+│   │   ├── mod.rs
+│   │   └── nav_data.rs
 │   ├── pipeline                   # high-level pipeline
 │   │   ├── mod.rs
 │   │   └── receiver.rs            # соединяет acquisition → tracking → solver
@@ -94,8 +96,11 @@ glrx
 │   │   ├── fll.rs
 │   │   ├── mod.rs
 │   │   └── pll.rs
-│   ├── lib.rs                     # публичная библиотека
-│   └── main.rs                    # CLI / entrypoint
+│   ├── utils
+│   │   ├── mod.rs
+│   │   └── timing.rs
+│   ├── lib.rs
+│   └── main.rs
 ├── tests
 │   ├── fixtures
 │   │   ├── expected
