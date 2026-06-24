@@ -224,7 +224,8 @@ pub struct FrameDecoder {
     state: DecodeState,
     bit_buffer: BitWindow,
     prev_d29_d30: (bool, bool),
-    current_words: Vec<[bool; 24]>,
+    current_words: [[bool; 24]; WORDS_PER_SUBFRAME],
+    words_collected: usize,
     retry: RetryPolicy,
     retries_since_resync: usize,
     stats: FrameDecoderStats,
@@ -381,7 +382,8 @@ impl FrameDecoder {
             state: DecodeState::SearchingPreamble,
             bit_buffer: BitWindow::default(),
             prev_d29_d30: (false, false),
-            current_words: Vec::with_capacity(WORDS_PER_SUBFRAME),
+            current_words: [[false; 24]; WORDS_PER_SUBFRAME],
+            words_collected: 0,
             retry,
             retries_since_resync: 0,
             stats: FrameDecoderStats::default(),
@@ -478,8 +480,8 @@ impl FrameDecoder {
 
             self.prev_d29_d30 = (word[28], word[29]);
 
-            self.current_words.clear();
-            self.current_words.push(info_bits);
+            self.current_words[0] = info_bits;
+            self.words_collected = 1;
 
             self.bit_buffer.clear();
 
@@ -511,15 +513,17 @@ impl FrameDecoder {
         }
 
         let word = self.bit_buffer.to_word();
-        let word_index = self.current_words.len();
+        let word_index = self.words_collected;
 
         if let Some(info_bits) = check_and_correct_parity(&word, self.prev_d29_d30) {
             self.prev_d29_d30 = (word[28], word[29]);
-            self.current_words.push(info_bits);
+
+            self.current_words[word_index] = info_bits;
+            self.words_collected += 1;
 
             self.bit_buffer.clear();
 
-            if self.current_words.len() == WORDS_PER_SUBFRAME {
+            if self.words_collected == WORDS_PER_SUBFRAME {
                 let subframe = self.finalize_subframe();
                 self.reset_for_next_subframe();
                 Ok(Some(subframe))
@@ -535,19 +539,17 @@ impl FrameDecoder {
     fn finalize_subframe(&self) -> DecodedSubframe {
         let how = parse_how_word(&self.current_words[1]);
 
-        let mut words = [[false; 24]; WORDS_PER_SUBFRAME];
-        words.copy_from_slice(&self.current_words[..WORDS_PER_SUBFRAME]);
-
         DecodedSubframe {
             subframe_id: how.subframe_id,
             how,
-            words,
+            words: self.current_words,
         }
     }
 
-    fn reset_for_next_subframe(&mut self) {
+    const fn reset_for_next_subframe(&mut self) {
         self.stats.subframes_decoded += 1;
-        self.current_words.clear();
+        self.current_words = [[false; 24]; WORDS_PER_SUBFRAME];
+        self.words_collected = 0;
         self.bit_buffer.clear();
         self.state = DecodeState::SearchingPreamble;
     }
@@ -556,7 +558,7 @@ impl FrameDecoder {
     /// сдвигать буфер на один бит и пробуем заново искать преамбулу
     /// (частичный retry), либо, если число повторов исчерпано, выполняем
     /// полный resync (полный сброс состояния).
-    fn handle_failure(
+    const fn handle_failure(
         &mut self,
         word_index: usize,
     ) -> Result<Option<DecodedSubframe>, FrameDecodeError> {
@@ -567,21 +569,19 @@ impl FrameDecoder {
             return Err(FrameDecodeError::PreambleNotFound);
         }
 
-        // частичный retry: просто сбрасываем FSM в поиск преамбулы
-        self.current_words.clear();
+        self.current_words = [[false; 24]; WORDS_PER_SUBFRAME];
+        self.words_collected = 0;
         self.state = DecodeState::SearchingPreamble;
-
-        // важно: НЕ трогаем bit_buffer
-        // потому что push() уже делает естественный сдвиг окна
 
         Err(FrameDecodeError::ParityMismatch { word_index })
     }
 
-    fn full_resync(&mut self) {
+    const fn full_resync(&mut self) {
         self.stats.full_resyncs += 1;
         self.state = DecodeState::SearchingPreamble;
         self.bit_buffer.clear();
-        self.current_words.clear();
+        self.current_words = [[false; 24]; WORDS_PER_SUBFRAME];
+        self.words_collected = 0;
         self.prev_d29_d30 = (false, false);
         self.retries_since_resync = 0;
     }
