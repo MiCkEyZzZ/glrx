@@ -62,6 +62,14 @@
 //! `Di = di ⊕ D*30` для `i = 1..24`. Уравнения parity (XOR-суммы
 //! подмножеств бит) взяты из GPS ICD-200 / IS-GPS-200.
 
+/// Конструирует 24-битную маску по 1-based позициям d1..d24.
+/// d1 - старший бит 24-битного поля, d24 - младший.
+macro_rules! mask24 {
+    ($($idx:expr),+ $(,)?) => {
+        0u32 $(| (1u32 << (24 - $idx)))+
+    };
+}
+
 /// Число 1-мс эпох в одном навигационном бите GPS L1 C/A.
 pub const EPOCHS_PER_BIT: usize = 20;
 
@@ -76,6 +84,16 @@ pub const WORDS_PER_SUBFRAME: usize = 10;
 
 /// Длина subframe в битах (`30 x 10`).
 pub const SUBFRAME_LENGTH_BITS: usize = WORD_LENGTH_BITS * WORDS_PER_SUBFRAME;
+
+/// 24-битная маска полезной нагрузки.
+const DATA_MASK_24: u32 = 0x00FF_FFFF;
+
+const D25_MASK: u32 = mask24!(1, 2, 3, 5, 6, 10, 11, 12, 13, 14, 17, 18, 20, 23);
+const D26_MASK: u32 = mask24!(2, 3, 4, 6, 7, 11, 12, 13, 14, 15, 18, 19, 21, 24);
+const D27_MASK: u32 = mask24!(1, 3, 4, 5, 7, 8, 12, 13, 14, 15, 16, 19, 20, 22);
+const D28_MASK: u32 = mask24!(2, 4, 5, 6, 8, 9, 13, 14, 15, 16, 17, 20, 21, 23);
+const D29_MASK: u32 = mask24!(1, 3, 5, 6, 7, 9, 10, 14, 15, 16, 17, 18, 21, 22, 24);
+const D30_MASK: u32 = mask24!(3, 5, 6, 8, 9, 10, 11, 13, 15, 19, 22, 23, 24);
 
 /// Состояние конечного автомата [`FrameDecoder`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -662,118 +680,33 @@ pub fn check_and_correct_parity(
 ) -> Option<[bool; 24]> {
     let (d_star_29, d_star_30) = prev_d29_d30;
 
-    // Применяем инверсию: Di = di ⊕ D*30 для информационных бит.
-    let mut d = [false; 24];
+    // Пакуем 30-битное слово в u32:
+    // word[0] -> bit29 ... word[29] -> bit0
+    let raw = pack_word(word);
 
-    for (i, &bit) in word.iter().take(24).enumerate() {
-        d[i] = bit ^ d_star_30;
+    // Извлекаем 24 информационных бита.
+    // После сдвига они лежат в младших 24 битах.
+    let mut payload = (raw >> 6) & DATA_MASK_24;
+
+    // Коррекция инверсии: Di = di XOR D*30
+    if d_star_30 {
+        payload ^= DATA_MASK_24;
     }
 
-    // Биты нумеруются с 1 в стандарте в массиве `d` индекс i соответствует d[i + 1].
-    // Вспомогательная ф-я для удобства чтения по 1-based индексу.
-    let g = |k: usize| d[k - 1];
-    let computed_d25 = d_star_29
-        ^ g(1)
-        ^ g(2)
-        ^ g(3)
-        ^ g(5)
-        ^ g(6)
-        ^ g(10)
-        ^ g(11)
-        ^ g(12)
-        ^ g(13)
-        ^ g(14)
-        ^ g(17)
-        ^ g(18)
-        ^ g(20)
-        ^ g(23);
-    let computed_d26 = d_star_30
-        ^ g(2)
-        ^ g(3)
-        ^ g(4)
-        ^ g(6)
-        ^ g(7)
-        ^ g(11)
-        ^ g(12)
-        ^ g(13)
-        ^ g(14)
-        ^ g(15)
-        ^ g(18)
-        ^ g(19)
-        ^ g(21)
-        ^ g(24);
-    let computed_d27 = d_star_29
-        ^ g(1)
-        ^ g(3)
-        ^ g(4)
-        ^ g(5)
-        ^ g(7)
-        ^ g(8)
-        ^ g(12)
-        ^ g(13)
-        ^ g(14)
-        ^ g(15)
-        ^ g(16)
-        ^ g(19)
-        ^ g(20)
-        ^ g(22);
-    let computed_d28 = d_star_30
-        ^ g(2)
-        ^ g(4)
-        ^ g(5)
-        ^ g(6)
-        ^ g(8)
-        ^ g(9)
-        ^ g(13)
-        ^ g(14)
-        ^ g(15)
-        ^ g(16)
-        ^ g(17)
-        ^ g(20)
-        ^ g(21)
-        ^ g(23);
-    let computed_d29 = d_star_30
-        ^ g(1)
-        ^ g(3)
-        ^ g(5)
-        ^ g(6)
-        ^ g(7)
-        ^ g(9)
-        ^ g(10)
-        ^ g(14)
-        ^ g(15)
-        ^ g(16)
-        ^ g(17)
-        ^ g(18)
-        ^ g(21)
-        ^ g(22)
-        ^ g(24);
-    let computed_d30 = d_star_29
-        ^ g(3)
-        ^ g(5)
-        ^ g(6)
-        ^ g(8)
-        ^ g(9)
-        ^ g(10)
-        ^ g(11)
-        ^ g(13)
-        ^ g(15)
-        ^ g(19)
-        ^ g(22)
-        ^ g(23)
-        ^ g(24);
+    let received_parity = raw & 0x3F;
 
-    let received = [word[24], word[25], word[26], word[27], word[28], word[29]];
-    let computed = [
-        computed_d25,
-        computed_d26,
-        computed_d27,
-        computed_d28,
-        computed_d29,
-        computed_d30,
-    ];
+    let expected_parity = (u32::from(d_star_29 ^ parity_odd(payload, D25_MASK)) << 5)
+        | (u32::from(d_star_30 ^ parity_odd(payload, D26_MASK)) << 4)
+        | (u32::from(d_star_29 ^ parity_odd(payload, D27_MASK)) << 3)
+        | (u32::from(d_star_30 ^ parity_odd(payload, D28_MASK)) << 2)
+        | (u32::from(d_star_30 ^ parity_odd(payload, D29_MASK)) << 1)
+        | u32::from(d_star_29 ^ parity_odd(payload, D30_MASK));
 
-    if received == computed { Some(d) } else { None }
+    if received_parity != expected_parity {
+        return None;
+    }
+
+    Some(unpack_payload24(payload))
 }
 
 /// Проверяет совпадение первых 8 бит слова с TLM-преамбулой.
@@ -808,6 +741,30 @@ pub fn parse_how_word(info_bits: &[bool; 24]) -> HowWord {
 /// Преобразует слайс бит (MSB первым) в `u32`.
 fn bits_to_u32(bits: &[bool]) -> u32 {
     bits.iter().fold(0u32, |acc, &b| (acc << 1) | u32::from(b))
+}
+
+#[inline]
+fn pack_word(word: &[bool; 30]) -> u32 {
+    word.iter().fold(0u32, |acc, &b| (acc << 1) | u32::from(b))
+}
+
+#[inline]
+fn unpack_payload24(payload: u32) -> [bool; 24] {
+    let mut out = [false; 24];
+
+    for (i, bit) in out.iter_mut().enumerate() {
+        *bit = ((payload >> (23 - i)) & 1) != 0;
+    }
+
+    out
+}
+
+#[inline]
+const fn parity_odd(
+    bits: u32,
+    mask: u32,
+) -> bool {
+    ((bits & mask).count_ones() & 1) != 0
 }
 
 impl Default for RetryPolicy {
