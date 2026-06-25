@@ -1,18 +1,25 @@
-//! Acquisition layer — satellite signal search.
+//! Слой захвата сигнала — поиск спутников GPS L1 C/A.
 //!
-//! # Algorithm
+//! # Алгоритм PCPS (Parallel Code Search)
 //!
-//! GLRX uses the **Parallel Code Search (PCPS)** algorithm:
+//! Для каждой пробной частоты Доплера `f_d` из сетки поиска:
 //!
 //! ```text
-//! for each Doppler trial f_d:
-//!   wiped  = signal × exp(−j·2π·f_d·t)
-//!   power  = |IFFT(FFT(wiped) × conj(FFT(prn)))|²
-//!   peak   = argmax(power)  →  code_phase
+//! wiped[n]  = signal[n] × exp(−j·2π·f_d·n/fs)   — снятие несущей
+//! S[k]      = FFT(wiped)
+//! C[k]      = FFT(prn_код)                        — предвычислено
+//! power[n]  = |IFFT(S[k] × conj(C[k]))|²         — корреляционная поверхность
+//! peak      = argmax(power)  →  code_phase        — фаза кода
 //! ```
 //!
-//! The 2D search surface (Doppler × `code_phase`) is evaluated for each PRN
-//! and the strongest peak above a detection threshold is declared acquired.
+//! # Структура модуля
+//!
+//! | Файл | Ответственность |
+//! |------|-----------------|
+//! | `fft_search`  | Ядро PCPS, двумерная поверхность (Доплер × фаза кода) |
+//! | `detector`    | CFAR-обнаружение, оценка C/N₀, валидация второго пика |
+//! | `verifier`    | Двухпроходная верификация, политика повтора, Rayon-параллелизм |
+//! | `correlator`  | (дублирует fft_search — см. вопрос об объединении)   |
 
 pub mod correlator;
 pub mod detector;

@@ -10,4 +10,5 @@
 //!                       сборка 300-битного subframe.
 //! ```
 
+pub mod ephemeris;
 pub mod frame_decoder;
