@@ -40,6 +40,35 @@ use crate::navigation::frame_decoder::DecodedSubframe;
 
 const PI: f64 = core::f64::consts::PI;
 
+/// Причина, по которой набор эфемерид считается непригодным для
+/// вычисления позиции.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EphemerisValidationError {
+    /// `sv+health != 0` - спутник помечен как нездоровый
+    UnhealthySatellite {
+        /// Значение health-флага
+        health: u8,
+    },
+
+    /// `IODE` (Subframe 2) и `IODE` (Subframe 3) не совпадают - параметры
+    /// орбиты получены из разных, потенциально несовместимых наборов
+    /// эфимерид.
+    IodeMismatch {
+        /// IODE из Subframe 2
+        iode_sf2: u8,
+        /// IODE из Subframe 3
+        iode_sf3: u8,
+    },
+
+    /// Нижние 8 бит `IODE` (Subframe 1) не совпадают с `IODE` (Subframe 2/3)
+    IodcIodeMismatch {
+        /// Нижние 8 бит IODC
+        iodc_low8: u8,
+        /// IODE
+        iode: u8,
+    },
+}
+
 /// Курсор для извлечения битовых полей произвольной длины из
 /// конкатинированного потока информационных слов subframe.
 pub struct BitCursor<'a> {
@@ -146,6 +175,25 @@ pub struct OrbitPart2 {
     pub idot: f64,
 }
 
+/// Полный комплект эфемерид одного спутника, собранный из Subframe 1, 2, 3.
+///
+/// Содержит все параметры, необходимые для вычисления позиции спутника в
+/// ECEF на произвольный момент времени GPS.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ephemeris {
+    /// PRN спутника
+    pub prn: u8,
+
+    /// Параметры часов и health (Subframe 1)
+    pub clock: ClockParams,
+
+    /// Параметры орбиты, часть 1 (Subframe 2)
+    pub orbit1: OrbitPart1,
+
+    /// Параметры орбиты, часть 2 (Subframe 3)
+    pub orbit2: OrbitPart2,
+}
+
 impl<'a> BitCursor<'a> {
     /// Создаёт курсор над конкатенированными информационными битами
     /// (без TLM и HOW - то есть `words[2..10]` объединённые в один слайс).
@@ -202,6 +250,61 @@ impl<'a> BitCursor<'a> {
         } else {
             i32::try_from(raw).expect("positive signed field must fit into i32")
         }
+    }
+}
+
+impl Ephemeris {
+    /// Собирает полный комплект эфемерид из трёх разобранных subframe.
+    ///
+    /// Не выполняет валидацию (health/IOD) - используйте
+    /// [`Ephemeris::validate`] после сборки.
+    #[must_use]
+    pub const fn new(
+        prn: u8,
+        clock: ClockParams,
+        orbit1: OrbitPart1,
+        orbit2: OrbitPart2,
+    ) -> Self {
+        Self {
+            prn,
+            clock,
+            orbit1,
+            orbit2,
+        }
+    }
+
+    /// Проверяет health-бит и консистентность `IODE`/`IODC` между
+    /// Subframe 1, 2 и 3
+    ///
+    /// # Errors
+    ///
+    /// Возвращает соответствующий вариант [`EphemerisValidationError`] при
+    /// первом обнаруженном несоответсвии (порядок проверки: health -> IODE
+    /// Subframe2 vs Subframe3 -> IODC low8 vs IODE).
+    pub const fn validate(&self) -> Result<(), EphemerisValidationError> {
+        if self.clock.sv_health != 0 {
+            return Err(EphemerisValidationError::UnhealthySatellite {
+                health: self.clock.sv_health,
+            });
+        }
+
+        if self.orbit1.iode != self.orbit2.iode {
+            return Err(EphemerisValidationError::IodeMismatch {
+                iode_sf2: self.orbit1.iode,
+                iode_sf3: self.orbit2.iode,
+            });
+        }
+
+        let iodc_low8 = (self.clock.iodc & 0xFF) as u8;
+
+        if iodc_low8 != self.orbit1.iode {
+            return Err(EphemerisValidationError::IodcIodeMismatch {
+                iodc_low8,
+                iode: self.orbit1.iode,
+            });
+        }
+
+        Ok(())
     }
 }
 
@@ -426,6 +529,50 @@ mod tests {
         word[start..].copy_from_slice(bits);
 
         word
+    }
+
+    fn dummy_clock(
+        health: u8,
+        iodc: u16,
+    ) -> ClockParams {
+        ClockParams {
+            week_number: 2300,
+            ura_index: 0,
+            sv_health: health,
+            iodc,
+            toc: 0.0,
+            af2: 0.0,
+            af1: 0.0,
+            af0: 0.0,
+        }
+    }
+
+    fn dummy_orbit1(iode: u8) -> OrbitPart1 {
+        OrbitPart1 {
+            iode,
+            crs: 0.0,
+            delta_n: 0.0,
+            m0: 0.0,
+            cuc: 0.0,
+            e: 0.0,
+            cus: 0.0,
+            sqrt_a: 5153.7,
+            toe: 0.0,
+        }
+    }
+
+    fn dummy_orbit2(iode: u8) -> OrbitPart2 {
+        OrbitPart2 {
+            cic: 0.0,
+            omega0: 0.0,
+            cis: 0.0,
+            i0: 0.96,
+            crc: 0.0,
+            omega: 0.0,
+            omega_dot: 0.0,
+            iode,
+            idot: 0.0,
+        }
     }
 
     #[test]
@@ -665,6 +812,85 @@ mod tests {
         assert!(
             orbit.omega0 < 0.0,
             "sign bit set should yield negative omega0"
+        );
+    }
+
+    #[test]
+    fn test_validate_passes_for_healthy_consistent_ephemeris() {
+        let eph = Ephemeris::new(
+            1,
+            dummy_clock(0, 0x00AA),
+            dummy_orbit1(0xAA),
+            dummy_orbit2(0xAA),
+        );
+
+        assert!(eph.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_fails_for_unhealthy_satellite() {
+        let eph = Ephemeris::new(
+            1,
+            dummy_clock(5, 0x00AA),
+            dummy_orbit1(0xAA),
+            dummy_orbit2(0xAA),
+        );
+
+        assert_eq!(
+            eph.validate(),
+            Err(EphemerisValidationError::UnhealthySatellite { health: 5 })
+        );
+    }
+
+    #[test]
+    fn test_validate_fails_for_iode_mismatch_between_sf2_sf3() {
+        let eph = Ephemeris::new(
+            1,
+            dummy_clock(0, 0x00AA),
+            dummy_orbit1(0xAA),
+            dummy_orbit2(0xBB),
+        );
+
+        assert_eq!(
+            eph.validate(),
+            Err(EphemerisValidationError::IodeMismatch {
+                iode_sf2: 0xAA,
+                iode_sf3: 0xBB
+            })
+        );
+    }
+
+    #[test]
+    fn test_validate_fails_for_iodc_iode_mismatch() {
+        let eph = Ephemeris::new(
+            1,
+            dummy_clock(0, 0x00FF),
+            dummy_orbit1(0xAA),
+            dummy_orbit2(0xAA),
+        );
+
+        assert_eq!(
+            eph.validate(),
+            Err(EphemerisValidationError::IodcIodeMismatch {
+                iodc_low8: 0xFF,
+                iode: 0xAA
+            })
+        );
+    }
+
+    #[test]
+    fn test_validate_checks_health_before_iode() {
+        // Both unhealthy AND IODE mismatch — health check should win (checked first).
+        let eph = Ephemeris::new(
+            1,
+            dummy_clock(3, 0x00AA),
+            dummy_orbit1(0xAA),
+            dummy_orbit2(0xBB),
+        );
+
+        assert_eq!(
+            eph.validate(),
+            Err(EphemerisValidationError::UnhealthySatellite { health: 3 })
         );
     }
 }
