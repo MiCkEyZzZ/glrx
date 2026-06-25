@@ -38,6 +38,8 @@
 
 use crate::navigation::frame_decoder::DecodedSubframe;
 
+const PI: f64 = core::f64::consts::PI;
+
 /// Курсор для извлечения битовых полей произвольной длины из
 /// конкатинированного потока информационных слов subframe.
 pub struct BitCursor<'a> {
@@ -75,6 +77,39 @@ pub struct ClockParams {
 
     /// Постоянный коэффициент коррекции часов (с), масштаб 2⁻³¹.
     pub af0: f64,
+}
+
+/// Параметры орбиты, часть 1 (Subframe 2): `iode`, `crs`, `delta_n`, `m0`,
+/// `cuc`, `e`, `cus`, `sqrt_a`, `toe`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OrbitPart1 {
+    /// Issue of Data, Ephemeris (8 бит) — должен совпадать с нижними 8
+    /// битами `iodc` из Subframe 1 и с `iode` из Subframe 3.
+    pub iode: u8,
+
+    /// Поправка синуса к радиусу орбиты (м), масштаб 2⁻⁵.
+    pub crs: f64,
+
+    /// Поправка к среднему движению (рад/с), масштаб 2⁻⁴³·π.
+    pub delta_n: f64,
+
+    /// Средняя аномалия на эпоху `toe` (рад), масштаб 2⁻³¹·π.
+    pub m0: f64,
+
+    /// Поправка широты, косинусный член (рад), масштаб 2⁻²⁹.
+    pub cuc: f64,
+
+    /// Эксцентриситет орбиты, масштаб 2⁻³³.
+    pub e: f64,
+
+    /// Поправка широты, синусный член (рад), масштаб 2⁻²⁹.
+    pub cus: f64,
+
+    /// Квадратный корень большой полуоси (м^½), масштаб 2⁻¹⁹.
+    pub sqrt_a: f64,
+
+    /// Время отсчёта эфемерид (с), масштаб 2⁴.
+    pub toe: f64,
 }
 
 impl<'a> BitCursor<'a> {
@@ -204,6 +239,62 @@ pub fn parse_subframe1(subframe: &DecodedSubframe) -> Option<ClockParams> {
         af1: f64::from(af1_raw) * 2f64.powi(-43),
         af0: f64::from(af0_raw) * 2f64.powi(-31),
     })
+}
+
+/// Разбирает Subframe 2 (параметры орбиты, часть 1).
+///
+/// # Возвращает
+/// - `None`, если `subframe.subframe_id != 2`.
+#[must_use]
+pub fn parse_subframe2(subframe: &DecodedSubframe) -> Option<OrbitPart1> {
+    if subframe.subframe_id != 2 {
+        return None;
+    }
+
+    let bits = concat_data_words(subframe);
+    let c = BitCursor::new(&bits);
+
+    // word0 (ICD word3): iode[8] crs[16]
+    let iode = c.unsigned(0, 8) as u8;
+    let crs_raw = c.signed(8, 16);
+    // word1 (ICD word4): delta_n[16] m0_msb[8]
+    let delta_n_raw = c.signed(24, 16);
+    let m0_msb = c.unsigned(40, 8);
+    // word2 (ICD word5): m0_lsb[24]
+    let m0_lsb = c.unsigned(48, 24);
+    // word3 (ICD word6): cuc[16] e_msb[8]
+    let cuc_raw = c.signed(72, 16);
+    let e_msb = c.unsigned(88, 8);
+    // word4 (ICD word7): e_lsb[24]
+    let e_lsb = c.unsigned(96, 24);
+    // word5 (ICD word8): cus[16] sqrt_a_msb[8]
+    let cus_raw = c.signed(120, 16);
+    let sqrt_a_msb = c.unsigned(136, 8);
+    // word6 (ICD word9): sqrt_a_lsb[24]
+    let sqrt_a_lsb = c.unsigned(144, 24);
+    // word7 (ICD word10): toe[16] fit_interval[1] aodo[5] parity_aux[2]
+    let toe_raw = c.unsigned(168, 16);
+
+    let m0_combined = (m0_msb << 24) | m0_lsb; // 32 бит
+    let e_combined = (e_msb << 24) | e_lsb; // 32 бит
+    let sqrt_a_combined = (sqrt_a_msb << 24) | sqrt_a_lsb; // 32 бит
+
+    Some(OrbitPart1 {
+        iode,
+        crs: f64::from(crs_raw) * 2f64.powi(-5),
+        delta_n: f64::from(delta_n_raw) * 2f64.powi(-43) * PI,
+        m0: sign_extend_32(m0_combined) * 2f64.powi(-31) * PI,
+        cuc: f64::from(cuc_raw) * 2f64.powi(-29),
+        e: f64::from(e_combined) * 2f64.powi(-33),
+        cus: f64::from(cus_raw) * 2f64.powi(-29),
+        sqrt_a: f64::from(sqrt_a_combined) * 2f64.powi(-19),
+        toe: f64::from(toe_raw) * 2f64.powi(4),
+    })
+}
+
+/// Расширяет знак 32-битного значения, хранимого в `u32`, в `f64`
+fn sign_extend_32(raw: u32) -> f64 {
+    f64::from(raw.cast_signed())
 }
 
 #[cfg(test)]
@@ -375,5 +466,73 @@ mod tests {
         let expected = 1.0 * 2f64.powi(-31);
 
         assert!((clock.af0 - expected).abs() < 1e-15);
+    }
+
+    #[test]
+    fn test_parse_subframe2_returns_none_for_wrong_id() {
+        let sf = make_subframe(1, [[false; 24]; 8]);
+
+        assert!(parse_subframe2(&sf).is_none());
+    }
+
+    #[test]
+    fn test_parse_subframe2_extracts_iode() {
+        let mut words = [[false; 24]; 8];
+        let mut w0 = Vec::new();
+
+        w0.extend(bits_from_u32(77, 8)); // iode = 77
+        w0.extend(bits_from_u32(0, 16)); // crs
+
+        words[0] = pad_word(&w0);
+
+        let sf = make_subframe(2, words);
+        let orbit = parse_subframe2(&sf).unwrap();
+
+        assert_eq!(orbit.iode, 77);
+    }
+
+    #[test]
+    fn test_parse_subframe2_sqrt_a_combines_msb_lsb() {
+        // sqrt_a is 32-bit split across words[5] (msb 8 bits) and words[6] (lsb 24 bits).
+        let mut bits = [false; 192];
+
+        // sqrt_a_msb at offset 136 (8 bits), sqrt_a_lsb at offset 144 (24 bits).
+        // Set combined value = 1 (LSB of full 32-bit field) → bit at offset 144+23.
+        bits[144 + 23] = true;
+
+        let mut words = [[false; 24]; 8];
+
+        for i in 0..8 {
+            words[i] = bits[i * 24..(i + 1) * 24].try_into().unwrap();
+        }
+
+        let sf = make_subframe(2, words);
+        let orbit = parse_subframe2(&sf).unwrap();
+
+        let expected = 1.0 * 2f64.powi(-19);
+
+        assert!((orbit.sqrt_a - expected).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_parse_subframe2_eccentricity_is_unsigned() {
+        // e occupies bits [88..96] (msb, word3) + [96..120] (lsb, word4) = 32 bits, unsigned.
+        let mut bits = [false; 192];
+
+        bits[96 + 23] = true; // LSB of combined 32-bit field → value 1
+
+        let mut words = [[false; 24]; 8];
+
+        for i in 0..8 {
+            words[i] = bits[i * 24..(i + 1) * 24].try_into().unwrap();
+        }
+
+        let sf = make_subframe(2, words);
+        let orbit = parse_subframe2(&sf).unwrap();
+
+        let expected = 1.0 * 2f64.powi(-33);
+
+        assert!((orbit.e - expected).abs() < 1e-15);
+        assert!(orbit.e >= 0.0, "eccentricity must be non-negative");
     }
 }
