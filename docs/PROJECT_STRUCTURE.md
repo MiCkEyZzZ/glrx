@@ -58,8 +58,8 @@ glrx
 │   │   ├── mod.rs
 │   │   └── verifier.rs
 │   ├── navigation                 # navigation
-│   │   ├── ephemeris.rs
-│   │   ├── frame_decoder.rs
+│   │   ├── ephemeris.rs           # physics + parsing + orbit
+│   │   ├── frame_decoder.rs       # structs + models
 │   │   ├── mod.rs
 │   │   └── nav_data.rs
 │   ├── pipeline                   # high-level pipeline

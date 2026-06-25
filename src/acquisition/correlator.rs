@@ -1,26 +1,26 @@
-//! FFT-based acquisition correlator (Parallel Code Search - PCPS).
+//! FFT-базированный коррелятор захвата (Parallel Code Search - PCPS).
 //!
-//! This module combines [`PrnCodeCache`] with [`FftEngine`] to implement
-//! the core GNSS acquisition algorithm: searching for a satellite's PRN
-//! code across all code phases simultaneously using FFT.
+//! Этот модуль объединяет [`PrnCodeCache`] с [`FftEngine`] для реализации
+//! основного алгоритма GNSS-захвата: поиска PRN-кода спутника по всем
+//! фазам кода одновременно с использованием FFT.
 //!
-//! # Algorithm - Parallel Code Search (PCPS)
+//! # Алгоритм — Parallel Code Search (PCPS)
 //!
-//! For each Doppler frequency trial `f_d`:
+//! Для каждой пробной доплеровской частоты `f_d`:
 //!
 //! ```text
-//! 1. Mix IQ block with exp(−j·2π·f_d·t)     → carrier wipe-off
-//! 2. FFT(mixed_signal)                        → S[k]
-//! 3. FFT(resampled_prn_code)                  → C[k]   (precomputed)
-//! 4. product[k] = S[k] × conj(C[k])          → freq-domain correlation
-//! 5. power[n] = |IFFT(product)|²              → correlation surface
-//! 6. peak = max(power)                        → (code_phase, power)
+//! 1. Смешивание IQ-блока с exp(−j·2π·f_d·t)     → подавление несущей
+//! 2. FFT(смешанный_сигнал)                      → S[k]
+//! 3. FFT(ресэмплированный_PRN_код)              → C[k]   (предвычисленный)
+//! 4. product[k] = S[k] × conj(C[k])             → частотная корреляция
+//! 5. power[n] = |IFFT(product)|²               → корреляционная поверхность
+//! 6. peak = max(power)                         → (фаза_кода, мощность)
 //! ```
 //!
-//! The peak position gives the **code phase** (chips), and the Doppler
-//! trial that produced the highest peak gives the **Doppler estimate**.
+//! Положение пика даёт **фазу кода** (в чипах), а доплеровская
+//! проба, давшая максимальный пик, даёт **оценку доплера**.
 //!
-//! # Usage
+//! # Использование
 //!
 //! ```no_run
 //! use glrx::acquisition::correlator::{AcquisitionCorrelator, AcquisitionResult};
@@ -29,14 +29,14 @@
 //! let cache = PrnCodeCache::new();
 //! let mut acq = AcquisitionCorrelator::new(2048, 2_048_000.0);
 //!
-//! // Precompute PRN FFTs for all satellites
+//! // Предвычисление FFT PRN для всех спутников
 //! acq.precompute_all(&cache);
 //!
-//! // Search PRN 1 across ±5 kHz Doppler with 500 Hz step
-//! // (signal would be real IQ data here)
+//! // Поиск PRN 1 в диапазоне ±5 кГц доплера с шагом 500 Гц
+//! // (здесь сигнал — просто заглушка IQ данных)
 //! let signal = vec![num_complex::Complex32::new(0.0, 0.0); 2048];
 //! if let Some(result) = acq.search(&signal, 1, -5000.0, 5000.0, 500.0) {
-//!     println!("PRN 1: doppler={:.0} Hz, code_phase={}", result.doppler_hz, result.code_phase_samples);
+//!     println!("PRN 1: доплер={:.0} Гц, фаза_кода={}", result.doppler_hz, result.code_phase_samples);
 //! }
 //! ```
 
@@ -50,26 +50,26 @@ use crate::signal::{
     prn_code::{GPS_CODE_LENGTH, PrnCodeCache},
 };
 
-/// Result of a successful PRN acquisition search.
+/// Результат успешного захвата PRN (поиска спутника).
 #[derive(Debug, Clone)]
 pub struct AcquisitionResult {
-    /// PRN number that was searched (1-32 for GPS)
+    /// Номер PRN, который был найден (1–32 для GPS)
     pub prn: u8,
 
-    /// Estimated Doppler frequency shift in Hz
+    /// Оценка доплеровского сдвига частоты в Гц
     pub doppler_hz: f64,
 
-    /// Code phase of the correlation peak in samples (`0..block_size`)
+    /// Фаза кода корреляционного пика в сэмплах (`0..block_size`)
     pub code_phase_samples: usize,
 
-    /// Code phase converted to chips (0.0..1023.0)
+    /// Фаза кода, преобразованная в чипы (0.0..1023.0)
     pub code_phase_chips: f64,
 
-    /// Peak correlation power (linear, not dB)
+    /// Пиковая мощность корреляции (линейная, не дБ)
     pub peak_power: f32,
 
-    /// Ratio of peak power to mean power — higher is better.
-    /// Values > 2.5 typically indicate a confident detection
+    /// Отношение пиковой мощности к средней — чем выше, тем лучше.
+    /// Значения > 2.5 обычно указывают на уверенное обнаружение
     pub peak_to_mean_ratio: f32,
 }
 
