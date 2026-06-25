@@ -112,6 +112,40 @@ pub struct OrbitPart1 {
     pub toe: f64,
 }
 
+/// Параметры орбиты, часть 2 (Subframe 3): `cic`, `omega0`, `cis`, `i0`,
+/// `crc`, `omega`, `omega_dot`, `idot`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OrbitPart2 {
+    /// Поправка наклонения, косинусный член (рад), масштаб 2⁻²⁹.
+    pub cic: f64,
+
+    /// Долгота восходящего узла на начальную эпоху недели (рад), масштаб
+    /// 2⁻³¹·π.
+    pub omega0: f64,
+
+    /// Поправка наклонения, синусный член (рад), масштаб 2⁻²⁹.
+    pub cis: f64,
+
+    /// Наклонение орбиты на эпоху `toe` (рад), масштаб 2⁻³¹·π.
+    pub i0: f64,
+
+    /// Поправка к радиусу, косинусный член (м), масштаб 2⁻⁵.
+    pub crc: f64,
+
+    /// Аргумент перигея (рад), масштаб 2⁻³¹·π.
+    pub omega: f64,
+
+    /// Скорость изменения долготы узла (рад/с), масштаб 2⁻⁴³·π.
+    pub omega_dot: f64,
+
+    /// Issue of Data, Ephemeris (8 бит) — должен совпадать с `iode` из
+    /// Subframe 2.
+    pub iode: u8,
+
+    /// Скорость изменения наклонения (рад/с), масштаб 2⁻⁴³·π.
+    pub idot: f64,
+}
+
 impl<'a> BitCursor<'a> {
     /// Создаёт курсор над конкатенированными информационными битами
     /// (без TLM и HOW - то есть `words[2..10]` объединённые в один слайс).
@@ -289,6 +323,57 @@ pub fn parse_subframe2(subframe: &DecodedSubframe) -> Option<OrbitPart1> {
         cus: f64::from(cus_raw) * 2f64.powi(-29),
         sqrt_a: f64::from(sqrt_a_combined) * 2f64.powi(-19),
         toe: f64::from(toe_raw) * 2f64.powi(4),
+    })
+}
+
+/// Разбирает Subframe 3 (параметры орбиты, часть 2).
+///
+/// # Возвращает
+/// - `None`, если `subframe.subframe_id != 3`.
+#[must_use]
+pub fn parse_subframe3(subframe: &DecodedSubframe) -> Option<OrbitPart2> {
+    if subframe.subframe_id != 3 {
+        return None;
+    }
+
+    let bits = concat_data_words(subframe);
+    let c = BitCursor::new(&bits);
+
+    // word0 (ICD word3): cic[16] omega0_msb[8]
+    let cic_raw = c.signed(0, 16);
+    let omega0_msb = c.unsigned(16, 8);
+    // word1 (ICD word4): omega0_lsb[24]
+    let omega0_lsb = c.unsigned(24, 24);
+    // word2 (ICD word5): cis[16] i0_msb[8]
+    let cis_raw = c.signed(48, 16);
+    let i0_msb = c.unsigned(64, 8);
+    // word3 (ICD word6): i0_lsb[24]
+    let i0_lsb = c.unsigned(72, 24);
+    // word4 (ICD word7): crc[16] omega_msb[8]
+    let crc_raw = c.signed(96, 16);
+    let omega_msb = c.unsigned(112, 8);
+    // word5 (ICD word8): omega_lsb[24]
+    let omega_lsb = c.unsigned(120, 24);
+    // word6 (ICD word9): omega_dot[24]
+    let omega_dot_raw = c.signed(144, 24);
+    // word7 (ICD word10): iode[8] idot[14] parity_aux[2]
+    let iode = c.unsigned(168, 8) as u8;
+    let idot_raw = c.signed(176, 14);
+
+    let omega0_combined = (omega0_msb << 24) | omega0_lsb;
+    let i0_combined = (i0_msb << 24) | i0_lsb;
+    let omega_combined = (omega_msb << 24) | omega_lsb;
+
+    Some(OrbitPart2 {
+        cic: f64::from(cic_raw) * 2f64.powi(-29),
+        omega0: sign_extend_32(omega0_combined) * 2f64.powi(-31) * PI,
+        cis: f64::from(cis_raw) * 2f64.powi(-29),
+        i0: sign_extend_32(i0_combined) * 2f64.powi(-31) * PI,
+        crc: f64::from(crc_raw) * 2f64.powi(-5),
+        omega: sign_extend_32(omega_combined) * 2f64.powi(-31) * PI,
+        omega_dot: f64::from(omega_dot_raw) * 2f64.powi(-43) * PI,
+        iode,
+        idot: f64::from(idot_raw) * 2f64.powi(-43) * PI,
     })
 }
 
@@ -534,5 +619,52 @@ mod tests {
 
         assert!((orbit.e - expected).abs() < 1e-15);
         assert!(orbit.e >= 0.0, "eccentricity must be non-negative");
+    }
+
+    #[test]
+    fn test_parse_subframe3_returns_none_for_wrong_id() {
+        let sf = make_subframe(1, [[false; 24]; 8]);
+
+        assert!(parse_subframe3(&sf).is_none());
+    }
+
+    #[test]
+    fn test_parse_subframe3_extracts_iode_matching_subframe2() {
+        let mut words = [[false; 24]; 8];
+        let mut w7 = Vec::new();
+
+        w7.extend(bits_from_u32(77, 8)); // iode = 77, matches subframe2 test
+        w7.extend(bits_from_u32(0, 14)); // idot
+        w7.extend(bits_from_u32(0, 2)); // aux
+
+        words[7] = pad_word(&w7);
+
+        let sf = make_subframe(3, words);
+        let orbit = parse_subframe3(&sf).unwrap();
+
+        assert_eq!(orbit.iode, 77);
+    }
+
+    #[test]
+    fn test_parse_subframe3_omega0_sign_extends_negative() {
+        // omega0 spans words[0] bits[16..24] (msb) + words[1] (lsb, 24 bits) = 32-bit signed.
+        let mut bits = [false; 192];
+
+        // Set sign bit (MSB of the 32-bit field, at offset 16) to 1 → negative value.
+        bits[16] = true;
+
+        let mut words = [[false; 24]; 8];
+
+        for i in 0..8 {
+            words[i] = bits[i * 24..(i + 1) * 24].try_into().unwrap();
+        }
+
+        let sf = make_subframe(3, words);
+        let orbit = parse_subframe3(&sf).unwrap();
+
+        assert!(
+            orbit.omega0 < 0.0,
+            "sign bit set should yield negative omega0"
+        );
     }
 }
