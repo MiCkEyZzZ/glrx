@@ -12,3 +12,4 @@
 
 pub mod ephemeris;
 pub mod frame_decoder;
+pub mod nav_data;
