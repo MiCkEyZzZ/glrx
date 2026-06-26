@@ -73,34 +73,35 @@ pub struct AcquisitionResult {
     pub peak_to_mean_ratio: f32,
 }
 
-/// FFT-based PCPS acquisition engine.
+/// FFT-базированный движок захвата PCPS.
 ///
-/// Maintains:
-/// - A single [`FftEngine`] of size `block_size` (reused across calls).
-/// - Pre-computed FFTs of all PRN codes at the configured sample rate.
+/// Хранит:
+/// - Один экземпляр [`FftEngine`] размером `block_size`
+///   (повторно используется между вызовами).
+/// - Предвычисленные FFT всех PRN-кодов для заданной частоты дискретизации.
 pub struct AcquisitionCorrelator {
-    /// FFT Engine
+    /// FFT-движок
     fft: FftEngine,
 
-    /// `block_size` = number of IQ samples per code period (1ms)
+    /// `block_size` — количество IQ-сэмплов за один период кода (1 мс)
     block_size: usize,
 
-    /// Receiver sample rate in Hz
+    /// Частота дискретизации приёмника в Гц
     sample_rate_hz: f64,
 
-    /// Precomputed `FFT(prn_code)` for each PRN
-    /// Key: PRN 1-32, Value: complex spectrum of the resampled code.
+    /// Предвычисленные `FFT(prn_code)` для каждого PRN.
+    /// Ключ: PRN 1–32, значение: комплексный спектр ресэмплированного кода.
     prn_ffts: HashMap<u8, Vec<Complex32>>,
 }
 
 impl AcquisitionCorrelator {
-    /// Crate a new correlator.
+    /// Создаёт новый коррелятор.
     ///
-    /// # Arguments
+    /// # Аргументы
     ///
-    /// - `block_size` - number of IQ samples per code period (e.g. 2048 for
-    ///   2.048 Msps GPS L1 C/A at 1ms integration).
-    /// - `sample_rate_hz` - IQ sample rate in Hz.
+    /// - `block_size` — количество IQ-сэмплов за один период кода
+    ///   (например, 2048 для GPS L1 C/A при 2.048 Мвыб/с и интегрировании 1 мс).
+    /// - `sample_rate_hz` — частота дискретизации IQ-сигнала в Гц.
     #[must_use]
     pub fn new(
         block_size: usize,
@@ -114,13 +115,15 @@ impl AcquisitionCorrelator {
         }
     }
 
-    /// Precompute FFT of the resampled PRN code for a single satellite.
+    /// Предвычисляет FFT ресэмплированного PRN-кода для одного спутника.
     ///
-    /// Call this once per PRN before starting acquisition searches.
+    /// Этот метод следует вызвать один раз для каждого PRN перед началом
+    /// процедур захвата.
     ///
     /// # Panics
     ///
-    /// Panics if `prn` is outside the valid GPS L1 C/A range `1..=32`.
+    /// Вызывает панику, если `prn` находится вне допустимого диапазона
+    /// GPS L1 C/A: `1..=32`.
     pub fn precompute_prn(
         &mut self,
         prn: u8,
@@ -129,7 +132,8 @@ impl AcquisitionCorrelator {
         let resampled = cache
             .resample_gps(prn, self.block_size)
             .expect("PRN must be 1..=32");
-        // Convert f32 code to Complex32 (real-valued, imaginary = 0)
+        // Преобразуем код f32 в Complex32 (действительная часть = код,
+        // мнимая часть = 0)
         let mut code_complex: Vec<Complex32> = resampled
             .into_iter()
             .map(|c| Complex32::new(c, 0.0))
@@ -139,7 +143,7 @@ impl AcquisitionCorrelator {
         self.prn_ffts.insert(prn, code_complex);
     }
 
-    /// Precompute FFTs for all GPS PRN 1-32.
+    /// Предвычисляет FFT для всех GPS PRN 1–32.
     pub fn precompute_all(
         &mut self,
         cache: &PrnCodeCache,
@@ -184,29 +188,38 @@ impl AcquisitionCorrelator {
         Some(product.into_iter().map(|s| s.norm_sqr()).collect())
     }
 
-    /// Search for `prn` across a Doppler grid.
+    /// Выполняет поиск `prn` по сетке доплеровских частот.
     ///
-    /// # Arguments
+    /// # Аргументы
     ///
-    /// * `signal` — one code-period of IQ samples (length must match `block_size`).
-    /// * `prn` — GPS PRN to search (1–32). Must have been precomputed.
-    /// * `doppler_min_hz` — start of Doppler search range in Hz (e.g. −5000).
-    /// * `doppler_max_hz` — end of Doppler search range in Hz (e.g. +5000).
-    /// * `doppler_step_hz` — frequency resolution of the grid (e.g. 500).
+    /// * `signal` — один период кода в виде IQ-сэмплов
+    ///   (длина должна совпадать с `block_size`).
+    /// * `prn` — GPS PRN для поиска (1–32). Для него должны быть
+    ///   предварительно вычислены данные.
+    /// * `doppler_min_hz` — начало диапазона поиска по доплеру в Гц
+    ///   (например, −5000).
+    /// * `doppler_max_hz` — конец диапазона поиска по доплеру в Гц
+    ///   (например, +5000).
+    /// * `doppler_step_hz` — шаг сетки по частоте в Гц
+    ///   (например, 500).
     ///
-    /// # Returns
+    /// # Возвращает
     ///
-    /// `None` if the PRN was not precomputed.
-    /// `Some(AcquisitionResult)` with the Doppler + code phase of the maximum
-    /// peak found across the entire grid.
+    /// `None`, если для данного PRN не были выполнены предварительные
+    /// вычисления.
+    ///
+    /// `Some(AcquisitionResult)` с оценкой доплеровского сдвига и фазы кода,
+    /// соответствующими максимальному корреляционному пику, найденному во всей
+    /// поисковой сетке.
     ///
     /// # Panics
     ///
-    /// Panics if floating-point comparison fails due to NaN values
-    /// encountered during peak search (`partial_cmp(...).unwrap()`).
+    /// Вызывает панику, если сравнение чисел с плавающей точкой завершается
+    /// ошибкой из-за появления значений NaN во время поиска пика
+    /// (`partial_cmp(...).unwrap()`).
     ///
-    /// Panics if internal power computation produces an empty surface
-    /// (should not happen in normal operation).
+    /// Вызывает панику, если внутренний расчёт мощности создаёт пустую
+    /// корреляционную поверхность (в штатном режиме работы происходить не должно).
     pub fn search(
         &mut self,
         signal: &[Complex32],
@@ -227,11 +240,11 @@ impl AcquisitionCorrelator {
         let mut f = doppler_min_hz;
 
         while f <= doppler_max_hz + doppler_step_hz * 0.5 {
-            // Carrier wipe-off at trial Doppler
+            // Подавление несущей для текущей пробной доплеровской частоты
             let wiped = apply_doppler(signal, -f, self.sample_rate_hz);
-            // Cross-correlate with precomputed PRN
+            // Кросс-корреляция с предварительно вычисленным PRN
             let power = self.correlate_power(&wiped, prn)?;
-            // Find peak in this Doppler slice
+            // Поиск пика для данного среза по доплеру
             let (peak_idx, &peak_val) = power
                 .iter()
                 .enumerate()
@@ -254,7 +267,7 @@ impl AcquisitionCorrelator {
             0.0
         };
 
-        // Convert sample phase to chip phase
+        // Преобразование фазы в сэмплах в фазу кода в чипах
         let code_phase_chips = best_phase as f64 * GPS_CODE_LENGTH as f64 / self.block_size as f64;
 
         Some(AcquisitionResult {
@@ -267,26 +280,29 @@ impl AcquisitionCorrelator {
         })
     }
 
-    /// Block size this correlator was built for.
+    /// Размер блока, под который был сконфигурирован коррелятор.
     #[must_use]
     pub const fn block_size(&self) -> usize {
         self.block_size
     }
 
-    /// Sample rate this correlator was built for.
+    /// Частота дискретизации, под которую был сконфигурирован коррелятор.
     #[must_use]
     pub const fn sample_rate_hz(&self) -> f64 {
         self.sample_rate_hz
     }
 
-    /// The number of PRNs currently precomputed.
+    /// Количество PRN, для которых уже выполнено предварительное вычисление.
     #[must_use]
     pub fn precomputed_count(&self) -> usize {
         self.prn_ffts.len()
     }
 }
 
-/// Apply Doppler frequency shift to a signal block.
+/// Применяет доплеровский сдвиг частоты к блоку сигнала.
+///
+/// Этот метод выполняет частотное смещение IQ-сигнала с использованием
+/// численного генератора осциллятора (NCO).
 fn apply_doppler(
     signal: &[Complex32],
     doppler_hz: f64,
@@ -298,7 +314,7 @@ fn apply_doppler(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Tests
+// Тесты
 ////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]

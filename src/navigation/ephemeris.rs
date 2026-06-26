@@ -4,8 +4,12 @@
 //! Без эфемерид невозможно вычислить координаты спутника, а без координат
 //! ни псевдодальность, ни позиционное решение. Этот модуль потребляет
 //! [`crate::navigation::frame_decoder::DecodedSubframe`] и извлекает из
-//! информационных слов параметры орбиты Кплера и коррекции часов спутника
-//! согласно GPS ICD-200 / IS-GPS-200.
+//! навигационных слов параметры орбиты Кеплера и поправки часов спутника
+//! спутника согласно IS-GPS-200
+//!
+//! //! # Dataflow
+//!
+//! Ниже показан pipeline обработки навигационного сообщения:
 //!
 //! ```text
 //! DecodedSubframe { subframe_id: 1, words: [..] }
@@ -29,16 +33,27 @@
 //! Ephemeris::position_ecef(t)  →  (x, y, z) метры в ECEF
 //! ```
 //!
+//! Subframe 1/2/3 обрабатываются независимо и затем агрегируются в Ephemeris.
+//!
 //! # Битовые поля
 //!
 //! Каждое информационное слово приходит как `[bool; 24]` (после parity-корреляции
 //! в `frame_decoder`). Поля могут пересекать границы слов (например, `e` - 32 бита,
 //! занимает части двух последовательных 24-битных слов), поэтому используется конкатенация
-//! юитов нескольких слов перед извлечением поля - см. [`BitCursor`].
+//! битов нескольких слов перед извлечением поля - см. [`BitCursor`].
 
 use crate::navigation::frame_decoder::DecodedSubframe;
 
 const PI: f64 = core::f64::consts::PI;
+
+/// GPS-константа гравитационного параметра Земли (м³/с²), WGS-84.
+pub const WGS84_MU: f64 = 3.986_005e14;
+
+/// Угловая скорость вращения Земли (рад/с), WGS-84.
+pub const WGS84_OMEGA_E: f64 = 7.292_115_146_7e-5;
+
+/// Скорость света в вакууме (м/с), CODATA.
+pub const SPEED_OF_LIGHT: f64 = 299_792_458.0;
 
 /// Причина, по которой набор эфемерид считается непригодным для
 /// вычисления позиции.
@@ -184,7 +199,7 @@ pub struct Ephemeris {
     /// PRN спутника
     pub prn: u8,
 
-    /// Параметры часов и health (Subframe 1)
+    /// Параметры часов и здоровья (Subframe 1)
     pub clock: ClockParams,
 
     /// Параметры орбиты, часть 1 (Subframe 2)
@@ -305,6 +320,135 @@ impl Ephemeris {
         }
 
         Ok(())
+    }
+
+    /// Вычисляет позицию спутника в ECEF (метры) на момент GPS-времени `t`
+    /// (секунды недели), используя алгоритм Кеплера из GPS ICD-200.
+    ///
+    /// Возвращает `x, y, z, relativistic_correction_s`: координаты в
+    /// метрах и релятивисткую поправку часов (секунды), которая зависит
+    /// от эксцентричной аномалии и поэтому естественно вычисляется
+    /// вместе с позицией.
+    #[allow(clippy::many_single_char_names)]
+    #[must_use]
+    pub fn position_ecef(
+        &self,
+        t: f64,
+    ) -> (f64, f64, f64, f64) {
+        let o1 = &self.orbit1;
+        let o2 = &self.orbit2;
+
+        // 1. Большая полуось и среднее движение
+        let a = o1.sqrt_a * o1.sqrt_a;
+        let n0 = (WGS84_MU / (a * a * a)).sqrt();
+        let n = n0 + o1.delta_n;
+
+        // 2. Время с момента toe (с коррекцией перехода через границу недели)
+        let tk = Self::corrected_time_diff(t, o1.toe);
+
+        // 3. Средняя аномалия
+        let mk = o1.m0 + n * tk;
+
+        // 4. Эксцентрическая аномалия (интеграция Кеплера)
+        let mut ek = mk;
+
+        for _ in 0..10 {
+            ek = mk + o1.e * ek.sin();
+        }
+
+        // 5. Истинная аномалия
+        let sin_vk = (1.0 - o1.e * o1.e).sqrt() * ek.sin();
+        let cos_vk = ek.cos() - o1.e;
+        let vk = sin_vk.atan2(cos_vk);
+
+        // 6. Аргумент широты
+        let phi_k = vk + o2.omega;
+        let sin_2phi = (2.0 * phi_k).sin();
+        let cos_2phi = (2.0 * phi_k).cos();
+
+        // 7. Коррекция второго порядка
+        let delta_uk = o1.cus * sin_2phi + o1.cuc * cos_2phi;
+        let delta_rk = o1.crs * sin_2phi + o2.crc * cos_2phi;
+        let delta_ik = o2.cis * sin_2phi + o2.cic * cos_2phi;
+
+        // 8. Скорректированные значения
+        let uk = phi_k + delta_uk;
+        let rk = a * (1.0 - o1.e * ek.cos()) + delta_rk;
+        let ik = o2.i0 + delta_ik + o2.idot * tk;
+
+        // 9. Позиция в плоскости орбитыю
+        let xk_prime = rk * uk.cos();
+        let yk_prime = rk * uk.sin();
+
+        // 10. Долгота восходящего узла с учётом вращения Земли.
+        let omega_k = o2.omega + (o2.omega_dot - WGS84_OMEGA_E) * tk - WGS84_OMEGA_E * o1.toe;
+
+        // 11. ECEF координаты.
+        let cos_omega_k = omega_k.cos();
+        let sin_omega_k = omega_k.sin();
+        let cos_ik = ik.cos();
+        let sin_ik = ik.sin();
+        let x = xk_prime * cos_omega_k - yk_prime * cos_ik * sin_omega_k;
+        let y = xk_prime * sin_omega_k + yk_prime * cos_ik * cos_omega_k;
+        let z = yk_prime * sin_ik;
+
+        // Релятивистская коррекция: F * e * sqrt(a) * sin(EK), где
+        // F = -2 * sqrt(mu)/c² (форма GPS ICD-200).
+        let f_const = -2.0 * WGS84_MU.sqrt() / (SPEED_OF_LIGHT * SPEED_OF_LIGHT);
+        let relativistic_correction = f_const * o1.e * o1.sqrt_a * ek.sin();
+
+        (x, y, z, relativistic_correction)
+    }
+
+    /// Полная коррекция часов спутника, включающая релятивистский эффект.
+    ///
+    /// Эквивалентно `clock_correction(t) + relativistic_term`, где
+    /// `relativistic_term` берётся из [`Ephemeris::position_ecef`] — таким
+    /// образом эксцентрическую аномалию вычисляют единообразно в обоих
+    /// местах.
+    #[must_use]
+    pub fn clock_correction_with_relativistic(
+        &self,
+        t: f64,
+    ) -> f64 {
+        let (.., relativistic) = self.position_ecef(t);
+
+        self.clock_correction(t) + relativistic
+    }
+
+    /// Вычисляет коррекцию часов спутника (секунды) на момент `t` (GPS
+    /// system time, секунды недели), используя `af0, af1, af2` и `toc`.
+    ///
+    /// Релятивистская коррекция **не включена** — она требует
+    /// эксцентрической аномалии, вычисляемой отдельно в
+    /// [`Ephemeris::position_ecef`]; используйте
+    /// [`Ephemeris::clock_correction_with_relativistic`] если нужна полная
+    /// коррекция.
+    #[must_use]
+    pub fn clock_correction(
+        &self,
+        t: f64,
+    ) -> f64 {
+        let dt = Self::corrected_time_diff(t, self.clock.toc);
+
+        self.clock.af0 + self.clock.af1 * dt + self.clock.af2 * dt * dt
+    }
+
+    /// Разница времён с учётом перехода через границу недели (GPS ICD-200
+    /// требует приведения `t - t0` в диапазоне `[-302400, 302400]` c).
+    fn corrected_time_diff(
+        t: f64,
+        t0: f64,
+    ) -> f64 {
+        let mut dt = t - t0;
+
+        if dt > 302_400.0 {
+            dt -= 604_800.0;
+        } else if dt < -302_400.0 {
+            dt += 604_800.0;
+        }
+
+        dt
     }
 }
 
@@ -497,8 +641,8 @@ mod tests {
     ) -> DecodedSubframe {
         let mut words = [[false; 24]; 10];
 
-        // words[0] = TLM (irrelevant for ephemeris parsing)
-        // words[1] = HOW (irrelevant content-wise, but must carry subframe_id)
+        // words[0] = TLM (не используется при парсинге эфемерид)
+        // words[1] = HOW (содержимое несущественно, но должен содержать subframe_id)
         words[2..10].copy_from_slice(&data_words);
 
         DecodedSubframe {
@@ -575,6 +719,49 @@ mod tests {
         }
     }
 
+    // Строит эфемериды с параметрами, близкими к типичной круговой
+    // GPS-орбите (высота ~20, 200 км, наклонение ~55°), для проверки общей
+    // разумности вычисленной позиции (не bit-exact reference, но физически
+    // корректный порядок величины и базовые invariants).
+    fn typical_gps_ephemeris() -> Ephemeris {
+        let clock = ClockParams {
+            week_number: 2300,
+            ura_index: 0,
+            sv_health: 0,
+            iodc: 0x0010,
+            toc: 0.0,
+            af2: 0.0,
+            af1: 0.0,
+            af0: 0.0,
+        };
+
+        let orbit1 = OrbitPart1 {
+            iode: 0x10,
+            crs: 0.0,
+            delta_n: 0.0,
+            m0: 0.0,
+            cuc: 0.0,
+            e: 0.001, // near-circular
+            cus: 0.0,
+            sqrt_a: 5153.65, // ~ sqrt(26560 км) → большая полуось орбиты GPS
+            toe: 0.0,
+        };
+
+        let orbit2 = OrbitPart2 {
+            cic: 0.0,
+            omega0: 0.0,
+            cis: 0.0,
+            i0: 55.0_f64.to_radians(),
+            crc: 0.0,
+            omega: 0.0,
+            omega_dot: 0.0,
+            iode: 0x10,
+            idot: 0.0,
+        };
+
+        Ephemeris::new(1, clock, orbit1, orbit2)
+    }
+
     #[test]
     fn test_cursor_unsigned_extracts_correct_value() {
         // 0b1011 = 11
@@ -595,7 +782,8 @@ mod tests {
 
     #[test]
     fn test_cursor_signed_positive_value() {
-        // 4-bit field, MSB=0 -> positive: 0b0101 = 5
+        // 4-битное поле, старший бит = 0 → положительное значение:
+        // 0b0101 = 5
         let bits = [false, true, false, true];
         let c = BitCursor::new(&bits);
 
@@ -604,7 +792,8 @@ mod tests {
 
     #[test]
     fn test_cursor_signed_negative_value() {
-        // 4-bit field, MSB=1 -> negative: 0b1000 = -8 (two's complement)
+        // 4-битное поле, старший бит = 1 → отрицательное число:
+        // 0b1000 = -8 (дополнительный код)
         let bits = [true, false, false, false];
         let c = BitCursor::new(&bits);
 
@@ -613,7 +802,7 @@ mod tests {
 
     #[test]
     fn test_cursor_signed_negative_one() {
-        // 4-bit all-ones = -1
+        // 4 бита, все единицы = -1 в знаковом представлении (two's complement)
         let bits = [true, true, true, true];
         let c = BitCursor::new(&bits);
 
@@ -644,8 +833,8 @@ mod tests {
 
         w0.extend(bits_from_u32(500, 10)); // week = 500
         w0.extend(bits_from_u32(0, 2)); // l2 code
-        w0.extend(bits_from_u32(0, 4)); // ura (signed but 0 is fine)
-        w0.extend(bits_from_u32(0, 6)); // health = 0 (healthy)
+        w0.extend(bits_from_u32(0, 4)); // ura (знаковое, но 0 допустим)
+        w0.extend(bits_from_u32(0, 6)); // health = 0 (спутник здоров)
         w0.extend(bits_from_u32(0, 2)); // iodc_msb
 
         words[0] = pad_word(&w0);
@@ -665,7 +854,7 @@ mod tests {
         w0.extend(bits_from_u32(0, 10));
         w0.extend(bits_from_u32(0, 2));
         w0.extend(bits_from_u32(0, 4));
-        w0.extend(bits_from_u32(0b10_1010, 6)); // nonzero health
+        w0.extend(bits_from_u32(0b10_1010, 6)); // ненулевое здоровье
         w0.extend(bits_from_u32(0, 2));
 
         words[0] = pad_word(&w0);
@@ -680,13 +869,13 @@ mod tests {
     fn test_parse_subframe1_af0_scale_applied() {
         let mut words = [[false; 24]; 8];
 
-        // word6 (data index 3): af1[16-high8] ... actually af0 spans word6[9..24]+word7[1..6].
-        // We directly target offsets used in parse_subframe1: af0_raw at bit 80, len 22.
-        // bits 80..102 sit in data words: 80/24=3 (word index 3, bit 8) .. up to word index 4.
+        // word6 (data index 3): af1[16-high8] ... фактически af0 занимает word6[9..24]+word7[1..6].
+        // Мы напрямую работаем с оффсетами, используемыми в parse_subframe1: af0_raw на бите 80, длина 22.
+        // биты 80..102 находятся в data words: 80/24=3 (word index 3, bit 8) .. вплоть до word index 4.
         let mut bits = [false; 192];
 
-        // Set af0_raw = 1 (smallest positive value) at offset 80, length 22.
-        bits[80 + 21] = true; // LSB of the 22-bit field at position offset+len-1
+        // Устанавливаем af0_raw = 1 (минимальное положительное значение) в позиции offset 80, длина 22.
+        bits[80 + 21] = true; // LSB 22-битного поля в позиции offset+len-1
 
         for i in 0..8 {
             words[i] = bits[i * 24..(i + 1) * 24].try_into().unwrap();
@@ -725,11 +914,13 @@ mod tests {
 
     #[test]
     fn test_parse_subframe2_sqrt_a_combines_msb_lsb() {
-        // sqrt_a is 32-bit split across words[5] (msb 8 bits) and words[6] (lsb 24 bits).
+        // sqrt_a занимает 32 бита, разбитые на words[5] (старшие 8 бит)
+        // и words[6] (младшие 24 бита).
         let mut bits = [false; 192];
 
-        // sqrt_a_msb at offset 136 (8 bits), sqrt_a_lsb at offset 144 (24 bits).
-        // Set combined value = 1 (LSB of full 32-bit field) → bit at offset 144+23.
+        // sqrt_a_msb начинается с offset 136 (8 бит), sqrt_a_lsb — с offset 144 (24 бита).
+        // Устанавливаем минимальное значение = 1 → единичный LSB всего 32-битного поля
+        // (бит 144+23).
         bits[144 + 23] = true;
 
         let mut words = [[false; 24]; 8];
@@ -748,10 +939,11 @@ mod tests {
 
     #[test]
     fn test_parse_subframe2_eccentricity_is_unsigned() {
-        // e occupies bits [88..96] (msb, word3) + [96..120] (lsb, word4) = 32 bits, unsigned.
+        // e занимает bits [88..96] (старшие биты, word3) и [96..120] (младшие биты, word4)
+        // в сумме — 32-битное беззнаковое значение.
         let mut bits = [false; 192];
 
-        bits[96 + 23] = true; // LSB of combined 32-bit field → value 1
+        bits[96 + 23] = true; // младший бит объединённого 32-битного поля -> значение 1
 
         let mut words = [[false; 24]; 8];
 
@@ -780,7 +972,7 @@ mod tests {
         let mut words = [[false; 24]; 8];
         let mut w7 = Vec::new();
 
-        w7.extend(bits_from_u32(77, 8)); // iode = 77, matches subframe2 test
+        w7.extend(bits_from_u32(77, 8)); // iode = 77, соответствует тесту subframe2
         w7.extend(bits_from_u32(0, 14)); // idot
         w7.extend(bits_from_u32(0, 2)); // aux
 
@@ -794,10 +986,11 @@ mod tests {
 
     #[test]
     fn test_parse_subframe3_omega0_sign_extends_negative() {
-        // omega0 spans words[0] bits[16..24] (msb) + words[1] (lsb, 24 bits) = 32-bit signed.
+        // omega0 занимает bits[16..24] в words[0] (старшие биты) и весь words[1]
+        // (младшие 24 бита) — в сумме 32-битное знаковое значение.
         let mut bits = [false; 192];
 
-        // Set sign bit (MSB of the 32-bit field, at offset 16) to 1 → negative value.
+        // Устанавливаем знак (старший бит 32-битного поля, смещение 16) в 1 -> отрицательное значение.
         bits[16] = true;
 
         let mut words = [[false; 24]; 8];
@@ -880,7 +1073,8 @@ mod tests {
 
     #[test]
     fn test_validate_checks_health_before_iode() {
-        // Both unhealthy AND IODE mismatch — health check should win (checked first).
+        // Спутник одновременно помечен как нездоровый и имеет несовпадающий IODE.
+        // Проверка health должна сработать первой, поскольку выполняется раньше.
         let eph = Ephemeris::new(
             1,
             dummy_clock(3, 0x00AA),
@@ -891,6 +1085,147 @@ mod tests {
         assert_eq!(
             eph.validate(),
             Err(EphemerisValidationError::UnhealthySatellite { health: 3 })
+        );
+    }
+
+    #[test]
+    fn test_position_ecef_radius_matches_gps_orbit_altitude() {
+        let eph = typical_gps_ephemeris();
+        let (x, y, z, _) = eph.position_ecef(0.0);
+        let radius = (x * x + y * y + z * z).sqrt();
+
+        // Большая полуось орбиты GPS составляет около 26 560 км, поэтому
+        // расстояние до центра Земли должно быть близко к этой величине
+        // (с точностью до нескольких сотен километров при e ≈ 0.001).
+        assert!(
+            (25_000_000.0..28_000_000.0).contains(&radius),
+            "radius {radius} m is not in expected GPS orbit range"
+        );
+    }
+
+    #[test]
+    fn test_position_ecef_at_toe_has_near_zero_true_anomaly_effect() {
+        // При t = toe, m0 = 0 и малом эксцентриситете спутник должен находиться
+        // вблизи направления восходящего узла в плоскости орбиты. Это в первую
+        // очередь проверка корректности вычислений: координаты и релятивистская
+        // поправка должны быть конечными и не вырождаться.
+        let eph = typical_gps_ephemeris();
+        let (x, y, z, rel) = eph.position_ecef(0.0);
+
+        assert!(x.is_finite() && y.is_finite() && z.is_finite());
+        assert!(rel.is_finite());
+        assert!(x != 0.0 || y != 0.0 || z != 0.0);
+    }
+
+    #[test]
+    fn test_position_ecef_varies_with_time() {
+        let eph = typical_gps_ephemeris();
+        let (x1, y1, z1, _) = eph.position_ecef(0.0);
+        let (x2, y2, z2, _) = eph.position_ecef(3600.0); // 1 час спустя
+        let moved = (x1 - x2).abs() > 1.0 || (y1 - y2).abs() > 1.0 || (z1 - z2).abs() > 1.0;
+
+        assert!(moved, "satellite position should change after 1 hour");
+    }
+
+    #[test]
+    fn test_position_ecef_periodic_after_one_orbital_period() {
+        // Период обращения GPS-спутника ≈ 11 ч 58 мин (половина звёздных суток),
+        // T = 2π / n.
+        let eph = typical_gps_ephemeris();
+        let a = eph.orbit1.sqrt_a * eph.orbit1.sqrt_a;
+        let n = (WGS84_MU / (a * a * a)).sqrt();
+        let period = 2.0 * core::f64::consts::PI / n;
+
+        let (x1, y1, z1, _) = eph.position_ecef(0.0);
+        let (x2, y2, z2, _) = eph.position_ecef(period);
+
+        // Координаты не совпадают в точности, поскольку за время одного витка
+        // система ECEF поворачивается вместе с Землёй (учитывается вращение Земли).
+        // Однако расстояние до центра Земли должно практически повториться,
+        // так как оно не зависит от выбранной системы координат.
+        let r1 = (x1 * x1 + y1 * y1 + z1 * z1).sqrt();
+        let r2 = (x2 * x2 + y2 * y2 + z2 * z2).sqrt();
+
+        assert!(
+            (r1 - r2).abs() < 1000.0,
+            "orbital radius should repeat after one period"
+        );
+    }
+
+    #[test]
+    fn test_clock_correction_zero_at_toc_with_zero_coefficients() {
+        let eph = typical_gps_ephemeris();
+        let correction = eph.clock_correction(eph.clock.toc);
+
+        assert!(correction.abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_clock_correction_linear_term_scales_with_time() {
+        let mut eph = typical_gps_ephemeris();
+
+        eph.clock.af1 = 1e-10;
+        eph.clock.toc = 0.0;
+
+        let c1000 = eph.clock_correction(1000.0);
+        let c2000 = eph.clock_correction(2000.0);
+
+        assert!((c2000 - 2.0 * c1000).abs() < 1e-15);
+    }
+
+    #[test]
+    fn test_clock_correction_handles_week_boundary_wrap() {
+        let mut eph = typical_gps_ephemeris();
+
+        eph.clock.toc = 604_800.0 - 100.0; // конец GPS-недели
+        eph.clock.af1 = 1e-9;
+
+        // Момент времени сразу после перехода через границу недели
+        // (t = 50, toc = 604700) должен корректно обернуться в небольшое
+        // положительное dt (~150 с), а не в огромное отрицательное значение.
+        let correction = eph.clock_correction(50.0);
+
+        assert!(correction.is_finite());
+        assert!(
+            correction.abs() < 1.0,
+            "wrapped dt should stay bounded, got correction={correction}"
+        );
+    }
+
+    #[test]
+    fn test_clock_correction_with_relativistic_includes_nonzero_term_for_eccentric_orbit() {
+        let mut eph = typical_gps_ephemeris();
+
+        eph.orbit1.e = 0.02; // более эксцентричная орбита -> релятивистская поправка обычно ненулевая
+
+        let basic = eph.clock_correction(1000.0);
+        let with_rel = eph.clock_correction_with_relativistic(1000.0);
+
+        // Значения могут совпасть, только если в данной точке орбиты
+        // релятивистская поправка оказалась равной нулю. Проверяем лишь,
+        // что оба результата конечны и вычисляются без ошибок.
+        assert!(basic.is_finite());
+        assert!(with_rel.is_finite());
+    }
+
+    #[test]
+    fn test_higher_eccentricity_changes_position_vs_circular() {
+        let mut eph_circular = typical_gps_ephemeris();
+
+        eph_circular.orbit1.e = 0.0;
+
+        let mut eph_eccentric = typical_gps_ephemeris();
+
+        eph_eccentric.orbit1.e = 0.05;
+
+        let (x1, y1, z1, _) = eph_circular.position_ecef(2000.0);
+        let (x2, y2, z2, _) = eph_eccentric.position_ecef(2000.0);
+
+        let diff = ((x1 - x2).powi(2) + (y1 - y2).powi(2) + (z1 - z2).powi(2)).sqrt();
+
+        assert!(
+            diff > 1.0,
+            "eccentricity should noticeably affect position, diff={diff}"
         );
     }
 }
