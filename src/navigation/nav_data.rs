@@ -6,12 +6,27 @@
 //! используемая потребителями выше по конвеёеру (observables, solver) для
 //! получения текущих эфемерид конкретного спутника.
 
-use std::f64::consts::TAU;
+use std::{collections::HashMap, f64::consts::TAU};
 
 use crate::navigation::{
-    ephemeris::{BitCursor, concat_data_words},
+    ephemeris::{
+        BitCursor, ClockParams, Ephemeris, EphemerisValidationError, OrbitPart1, OrbitPart2,
+        concat_data_words, parse_subframe1, parse_subframe2, parse_subframe3,
+    },
     frame_decoder::DecodedSubframe,
 };
+
+/// Причина, по которой эфемериды для PRN недоступны или невалидны при
+/// запросе через `NavData::ephemeris_validated`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EphemerisLookupError {
+    /// Для данного PRN ещё не собран полный комплект эфемерид (Subframe
+    /// 1, 2 и 3).
+    NotYetAvailable,
+
+    /// Эфемериды собраны, но не прошли валидацию (health/IOD).
+    Invalid(EphemerisValidationError),
+}
 
 /// Параметры ионосферной модели Клобухара, декодируемые из Subframe 4
 /// (страница 18).
@@ -27,6 +42,81 @@ pub struct IonosphericModel {
 
     /// Коэффициенты периода (секунды), масштабы `2¹², 2¹⁴, 2¹⁶, 2¹⁶`
     pub beta: [f64; 4],
+}
+
+/// GPS <-> UTC коррекция, передаваемая в том же Subframe 4 страницы 18, что и
+/// ионосферные параметры. Хранится отдельно от `crate::utils::timing` - слоя:
+/// здесь - только сырые декодированные значения, использование (например, для
+/// построения `gnss_time::LeapEntry`) выполняется выше по конвейеру.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UtcCorrection {
+    /// Текущее число leap-секунд (`ΔtLS`).
+    pub delta_t_ls: i8,
+
+    /// Будущее число leap-секунд после запланированного события (`ΔtLSF`).
+    pub delta_t_lsf: i8,
+
+    /// Номер недели запланированного leap-second события (`WN_LSF`).
+    pub wn_lsf: u8,
+
+    /// Номер дня внутри недели запланированного события (`DN`).
+    pub dn: u8,
+}
+
+/// Заготовка под запись almanac (приближённая орбита для быстрого cold
+/// start) - полная реализация запланирована в GLRX-12. Здесь определена
+/// только структура хранения, чтобы [`NavData`] могла резервировать под
+/// неё место без переработки API при появлении парсера.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct AlmanacEntry {
+    /// Health-байт спутника, как передан в almanac-записи
+    pub health: u8,
+
+    /// Выпуск данных, Almanac.
+    pub ioda: u8,
+}
+
+/// Промежуточное состояние сборки эфемерид для одного PRN: отдельные
+/// subframe приходят не одновременно (каждый decode subframe занимает 6 с),
+/// поэтому до получения всех трех частей собранные параметры хрянятся
+/// отделбно.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PendingEphemeris {
+    clock: Option<ClockParams>,
+    orbit1: Option<OrbitPart1>,
+    orbit2: Option<OrbitPart2>,
+}
+
+/// Хранилище текущего навигационного состояния приёмника: эфемерид по
+/// каждому отслеживаемому PRN, ионосферная модель, almanoc, UTC-коррекция.
+///
+/// # Типичный поток использования
+///
+/// ```text
+/// nav_data.ingest_subframe(prn, &decoded_subframe);
+/// // ... после получения subframe 1, 2 и 3 для данного PRN:
+/// if let Some(eph) = nav_data.ephemeris(prn) {
+///     if eph.validate().is_ok() {
+///         let (x, y, z, _) = eph.position_ecef(gps_tow);
+///     }
+/// }
+/// ```
+#[derive(Debug, Default)]
+pub struct NavData {
+    /// Полностью собранные и готовые к использованию эфемериды по PRN
+    pub ephemeris: HashMap<u8, Ephemeris>,
+
+    /// Незавершённые наборы эфемерид (ожидают оставшиеся subframe) по PRN
+    pending: HashMap<u8, PendingEphemeris>,
+
+    /// Ионосферная модель (общая для всех спутников constellation)
+    pub iono: Option<IonosphericModel>,
+
+    /// Почасовые/недельные almanac-записи по PRN (заглушка, GLRX-12)
+    pub almanac: HashMap<u8, AlmanacEntry>,
+
+    /// GPS–UTC коррекция (leap seconds), если уже декодирована
+    pub utc_correction: Option<UtcCorrection>,
 }
 
 impl IonosphericModel {
@@ -126,6 +216,125 @@ impl IonosphericModel {
     }
 }
 
+impl PendingEphemeris {
+    const fn is_complete(&self) -> bool {
+        self.clock.is_some() && self.orbit1.is_some() && self.orbit2.is_some()
+    }
+
+    const fn try_assemble(
+        &self,
+        prn: u8,
+    ) -> Option<Ephemeris> {
+        match (self.clock, self.orbit1, self.orbit2) {
+            (Some(clock), Some(orbit1), Some(orbit2)) => {
+                Some(Ephemeris::new(prn, clock, orbit1, orbit2))
+            }
+            _ => None,
+        }
+    }
+}
+
+impl NavData {
+    /// Создаёт пустое хранилище.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Принимает декодированный subframe для заданного PRN и обновляет
+    /// внутреннее состояние.
+    ///
+    /// Поддерживает subframe 1, 2, 3 (эфемериды) - при поступлении всех
+    /// трёх частей для данного PRN, [`NavData::ephemeris`] становится
+    /// доступным. Subframe 4 (ионосфера) поддерживается отдельно через
+    /// [`IonosphericModel::parse_page18`] - `ingest_subframe` не делает
+    /// различия страниц Subframe 4 (см. примечание в
+    /// [`IonosphericModel::parse_page18`]), поэтому ионосферные данные
+    /// нужно передавать через `NavData::set_ionospheric_model` явно.
+    ///
+    /// Возвращает `true`, если после этого вызова для `prn` стал доступен
+    /// (или обновился) полный комплект эфемерид.
+    pub fn ingest_subframe(
+        &mut self,
+        prn: u8,
+        subframe: &DecodedSubframe,
+    ) -> bool {
+        let entry = self.pending.entry(prn).or_default();
+        let updated = match subframe.subframe_id {
+            1 => {
+                if let Some(clock) = parse_subframe1(subframe) {
+                    entry.clock = Some(clock);
+
+                    true
+                } else {
+                    false
+                }
+            }
+            2 => {
+                if let Some(orbit1) = parse_subframe2(subframe) {
+                    entry.orbit1 = Some(orbit1);
+
+                    true
+                } else {
+                    false
+                }
+            }
+            3 => {
+                if let Some(orbit2) = parse_subframe3(subframe) {
+                    entry.orbit2 = Some(orbit2);
+
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+
+        if !updated {
+            return false;
+        }
+
+        if entry.is_complete()
+            && let Some(eph) = entry.try_assemble(prn)
+        {
+            self.ephemeris.insert(prn, eph);
+
+            return true;
+        }
+
+        false
+    }
+
+    /// Возвращает эфемериды для `prn`, если полный комплект уже собран
+    /// (без валидации health/IOD - см. `NavData::ephemeris_validated`
+    /// для проверенной версии).
+    #[must_use]
+    pub fn ephemeris(
+        &self,
+        prn: u8,
+    ) -> Option<&Ephemeris> {
+        self.ephemeris.get(&prn)
+    }
+
+    /// Число PRN с полностью собранными эфемеридами.
+    #[must_use]
+    pub fn ephemeris_count(&self) -> usize {
+        self.ephemeris.len()
+    }
+
+    /// Удаляет эфкмкриды и незавеншённые данные для `prn` (например, после
+    /// потери lock на этом спутнике).
+    pub fn clear_prn(
+        &mut self,
+        prn: u8,
+    ) {
+        self.ephemeris.remove(&prn);
+        self.pending.remove(&prn);
+        self.almanac.remove(&prn);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::navigation::frame_decoder::HowWord;
@@ -162,6 +371,68 @@ mod tests {
         word[start..].copy_from_slice(bits);
 
         word
+    }
+
+    fn subframe1_healthy(iode_low8: u8) -> DecodedSubframe {
+        let mut words = [[false; 24]; 10];
+        let mut w0 = Vec::new();
+
+        w0.extend(bits_from_u32(2300, 10)); // week
+        w0.extend(bits_from_u32(0, 2));
+        w0.extend(bits_from_u32(0, 4));
+        w0.extend(bits_from_u32(0, 6)); // health = 0
+        w0.extend(bits_from_u32(u32::from(iode_low8 >> 6), 2)); // iodc msb (top 2 bits)
+
+        words[2] = pad_word(&w0);
+
+        make_subframe(1, words)
+    }
+
+    fn subframe2_with_iode(iode: u8) -> DecodedSubframe {
+        let mut words = [[false; 24]; 10];
+        let mut w0 = Vec::new();
+
+        w0.extend(bits_from_u32(u32::from(iode), 8));
+        w0.extend(bits_from_u32(0, 16));
+        words[2] = pad_word(&w0);
+
+        // sqrt_a needs a nonzero plausible value so position_ecef doesn't divide by zero.
+        let mut bits = [false; 192];
+
+        bits[144..168].copy_from_slice(&{
+            let mut tmp = [false; 24];
+            let val_bits = bits_from_u32(2_000_000, 24);
+            tmp.copy_from_slice(&val_bits);
+            tmp
+        });
+
+        // iode goes in word index 0 bits 0..8 — already set via w0 above; merge by
+        // re-deriving words[2..10] fully from `bits` plus iode/crs in word0.
+        for i in 0..8 {
+            let mut w = [false; 24];
+
+            w.copy_from_slice(&bits[i * 24..(i + 1) * 24]);
+            if i == 0 {
+                w = words[2];
+            }
+
+            words[2 + i] = w;
+        }
+
+        make_subframe(2, words)
+    }
+
+    fn subframe3_with_iode(iode: u8) -> DecodedSubframe {
+        let mut words = [[false; 24]; 10];
+        let mut w7 = Vec::new();
+
+        w7.extend(bits_from_u32(u32::from(iode), 8));
+        w7.extend(bits_from_u32(0, 14));
+        w7.extend(bits_from_u32(0, 2));
+
+        words[9] = pad_word(&w7);
+
+        make_subframe(3, words)
     }
 
     #[test]
@@ -213,5 +484,97 @@ mod tests {
         // scaled by obliquity factor.
         assert!(delay > 0.0);
         assert!(delay < 1e-7);
+    }
+
+    #[test]
+    fn test_nav_data_starts_empty() {
+        let nav = NavData::new();
+
+        assert_eq!(nav.ephemeris_count(), 0);
+        assert!(nav.ephemeris(1).is_none());
+    }
+
+    #[test]
+    fn test_nav_data_assembles_ephemeris_after_all_three_subframes() {
+        let mut nav = NavData::new();
+        let sf1 = subframe1_healthy(0x10);
+        let sf2 = subframe2_with_iode(0x10);
+        let sf3 = subframe3_with_iode(0x10);
+
+        assert!(!nav.ingest_subframe(5, &sf1));
+        assert!(!nav.ingest_subframe(5, &sf2));
+
+        let completed = nav.ingest_subframe(5, &sf3);
+
+        assert!(
+            completed,
+            "all three subframes ingested → ephemeris should assemble"
+        );
+        assert!(nav.ephemeris(5).is_some());
+        assert_eq!(nav.ephemeris_count(), 1);
+    }
+
+    #[test]
+    fn test_nav_data_ingest_order_independent() {
+        let mut nav = NavData::new();
+
+        let sf1 = subframe1_healthy(0x20);
+        let sf2 = subframe2_with_iode(0x20);
+        let sf3 = subframe3_with_iode(0x20);
+
+        // Different order: 2, 3, 1
+        nav.ingest_subframe(7, &sf2);
+        nav.ingest_subframe(7, &sf3);
+
+        let completed = nav.ingest_subframe(7, &sf1);
+
+        assert!(completed);
+        assert!(nav.ephemeris(7).is_some());
+    }
+
+    #[test]
+    fn test_nav_data_separate_prns_do_not_interfere() {
+        let mut nav = NavData::new();
+
+        let sf1 = subframe1_healthy(0x10);
+        let sf2 = subframe2_with_iode(0x10);
+        let sf3 = subframe3_with_iode(0x10);
+
+        nav.ingest_subframe(1, &sf1);
+        nav.ingest_subframe(1, &sf2);
+        nav.ingest_subframe(1, &sf3);
+
+        // PRN 2 has received nothing — must remain unavailable.
+        assert!(nav.ephemeris(1).is_some());
+        assert!(nav.ephemeris(2).is_none());
+    }
+
+    #[test]
+    fn test_nav_data_incomplete_set_returns_none() {
+        let mut nav = NavData::new();
+        let sf1 = subframe1_healthy(0x10);
+
+        nav.ingest_subframe(3, &sf1);
+
+        assert!(nav.ephemeris(3).is_none());
+    }
+
+    #[test]
+    fn test_nav_data_clear_prn_removes_ephemeris() {
+        let mut nav = NavData::new();
+        let sf1 = subframe1_healthy(0x10);
+        let sf2 = subframe2_with_iode(0x10);
+        let sf3 = subframe3_with_iode(0x10);
+
+        nav.ingest_subframe(9, &sf1);
+        nav.ingest_subframe(9, &sf2);
+        nav.ingest_subframe(9, &sf3);
+
+        assert!(nav.ephemeris(9).is_some());
+
+        nav.clear_prn(9);
+
+        assert!(nav.ephemeris(9).is_none());
+        assert_eq!(nav.ephemeris_count(), 0);
     }
 }
