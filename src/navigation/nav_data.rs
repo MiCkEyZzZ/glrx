@@ -264,7 +264,6 @@ impl NavData {
             1 => {
                 if let Some(clock) = parse_subframe1(subframe) {
                     entry.clock = Some(clock);
-
                     true
                 } else {
                     false
@@ -273,7 +272,6 @@ impl NavData {
             2 => {
                 if let Some(orbit1) = parse_subframe2(subframe) {
                     entry.orbit1 = Some(orbit1);
-
                     true
                 } else {
                     false
@@ -282,7 +280,6 @@ impl NavData {
             3 => {
                 if let Some(orbit2) = parse_subframe3(subframe) {
                     entry.orbit2 = Some(orbit2);
-
                     true
                 } else {
                     false
@@ -306,6 +303,23 @@ impl NavData {
         false
     }
 
+    /// Устанавливает ионосферную модель (например, после декодирования
+    /// Subframe 4 страницы 18 через [`IonosphericModel::parse_page18`]).
+    pub const fn set_ionospheric_model(
+        &mut self,
+        model: IonosphericModel,
+    ) {
+        self.iono = Some(model);
+    }
+
+    /// Устанавливает GPS-UTC коррукцию.
+    pub const fn set_utc_correction(
+        &mut self,
+        correction: UtcCorrection,
+    ) {
+        self.utc_correction = Some(correction);
+    }
+
     /// Возвращает эфемериды для `prn`, если полный комплект уже собран
     /// (без валидации health/IOD - см. `NavData::ephemeris_validated`
     /// для проверенной версии).
@@ -317,13 +331,58 @@ impl NavData {
         self.ephemeris.get(&prn)
     }
 
-    /// Число PRN с полностью собранными эфемеридами.
-    #[must_use]
-    pub fn ephemeris_count(&self) -> usize {
-        self.ephemeris.len()
+    /// Возвращает эфемериды для `prn`, прошедшие валидацию (health == 0,
+    /// IODE/IODC консистентны).
+    ///
+    /// # Errors
+    ///
+    /// Возвращает [`EphemerisLookupError::NotYetAvailable`], если для
+    /// `prn` ещё не собран полный комплект, либо
+    /// [`EphemerisLookupError::Invalid`] с конкретной причиной, если
+    /// валидация не прошла.
+    pub fn ephemeris_validated(
+        &self,
+        prn: u8,
+    ) -> Result<&Ephemeris, EphemerisLookupError> {
+        let eph = self
+            .ephemeris
+            .get(&prn)
+            .ok_or(EphemerisLookupError::NotYetAvailable)?;
+
+        eph.validate().map_err(EphemerisLookupError::Invalid)?;
+
+        Ok(eph)
     }
 
-    /// Удаляет эфкмкриды и незавеншённые данные для `prn` (например, после
+    /// Проверяет возраст эфимерид относительно `current_tow` (секунды
+    /// недели GPS): по GPS ICD-200 эфемериды считаются актуальными в
+    /// пределах ±2 часов от `toe`.
+    ///
+    /// Возвращает `true`, если `|current_tow - toe|` (с учётом перехода
+    /// через границу недели) не превышает `max_age_s` секунд.
+    #[must_use]
+    pub fn is_ephemeris_fresh(
+        &self,
+        prn: u8,
+        current_tow: f64,
+        max_age_s: f64,
+    ) -> bool {
+        let Some(eph) = self.ephemeris.get(&prn) else {
+            return false;
+        };
+
+        let mut dt = current_tow - eph.orbit1.toe;
+
+        if dt > 302_400.0 {
+            dt -= 604_800.0;
+        } else if dt < -302_400.0 {
+            dt += 604_800.0;
+        }
+
+        dt.abs() <= max_age_s
+    }
+
+    /// Удаляет эфемериды и незавершённые данные для `prn` (например, после
     /// потери lock на этом спутнике).
     pub fn clear_prn(
         &mut self,
@@ -332,6 +391,12 @@ impl NavData {
         self.ephemeris.remove(&prn);
         self.pending.remove(&prn);
         self.almanac.remove(&prn);
+    }
+
+    /// Число PRN с полностью собранными эфемеридами.
+    #[must_use]
+    pub fn ephemeris_count(&self) -> usize {
+        self.ephemeris.len()
     }
 }
 
@@ -375,15 +440,26 @@ mod tests {
 
     fn subframe1_healthy(iode_low8: u8) -> DecodedSubframe {
         let mut words = [[false; 24]; 10];
+
+        // Слово 3
         let mut w0 = Vec::new();
 
-        w0.extend(bits_from_u32(2300, 10)); // week
-        w0.extend(bits_from_u32(0, 2));
-        w0.extend(bits_from_u32(0, 4));
-        w0.extend(bits_from_u32(0, 6)); // health = 0
-        w0.extend(bits_from_u32(u32::from(iode_low8 >> 6), 2)); // iodc msb (top 2 bits)
+        w0.extend(bits_from_u32(2300, 10)); // неделя
+        w0.extend(bits_from_u32(0, 2)); // L2 код
+        w0.extend(bits_from_u32(0, 4)); // URA
+        w0.extend(bits_from_u32(0, 6)); // состояние = 0
+        w0.extend(bits_from_u32(u32::from(iode_low8 >> 6), 2)); // IODC[9:8]
 
         words[2] = pad_word(&w0);
+
+        // Слово 4
+        let mut w1 = Vec::new();
+
+        w1.extend(bits_from_u32(0, 8)); // t_gd
+        w1.extend(bits_from_u32(u32::from(iode_low8), 8)); // IODC[7:0]
+        w1.extend(bits_from_u32(0, 8)); // начало toc
+
+        words[3] = pad_word(&w1);
 
         make_subframe(1, words)
     }
@@ -396,7 +472,7 @@ mod tests {
         w0.extend(bits_from_u32(0, 16));
         words[2] = pad_word(&w0);
 
-        // sqrt_a needs a nonzero plausible value so position_ecef doesn't divide by zero.
+        // sqrt_a должен иметь ненулевое правдоподобное значение, чтобы position_ecef не делил на ноль.
         let mut bits = [false; 192];
 
         bits[144..168].copy_from_slice(&{
@@ -406,8 +482,8 @@ mod tests {
             tmp
         });
 
-        // iode goes in word index 0 bits 0..8 — already set via w0 above; merge by
-        // re-deriving words[2..10] fully from `bits` plus iode/crs in word0.
+        // iode находится в word index 0 bits 0..8 — уже установлен через w0 выше; объединяем,
+        // пересобирая words[2..10] полностью из `bits` плюс iode/crs в word0.
         for i in 0..8 {
             let mut w = [false; 24];
 
@@ -480,8 +556,8 @@ mod tests {
         };
         let delay = model.delay_seconds(0.3, 0.5, 0.5, 0.0);
 
-        // With zero amplitude, periodic_term should reduce to the 5ns floor
-        // scaled by obliquity factor.
+        // При нулевой амплитуде periodic_term должен сводиться к минимальной границе 5 нс,
+        // масштабированной коэффициентом наклона (obliquity factor).
         assert!(delay > 0.0);
         assert!(delay < 1e-7);
     }
@@ -522,7 +598,7 @@ mod tests {
         let sf2 = subframe2_with_iode(0x20);
         let sf3 = subframe3_with_iode(0x20);
 
-        // Different order: 2, 3, 1
+        // Порядок подачи отличается: 2, 3, 1
         nav.ingest_subframe(7, &sf2);
         nav.ingest_subframe(7, &sf3);
 
@@ -544,7 +620,7 @@ mod tests {
         nav.ingest_subframe(1, &sf2);
         nav.ingest_subframe(1, &sf3);
 
-        // PRN 2 has received nothing — must remain unavailable.
+        // PRN 2 ничего не получил — должен оставаться недоступным.
         assert!(nav.ephemeris(1).is_some());
         assert!(nav.ephemeris(2).is_none());
     }
@@ -576,5 +652,118 @@ mod tests {
 
         assert!(nav.ephemeris(9).is_none());
         assert_eq!(nav.ephemeris_count(), 0);
+    }
+
+    #[test]
+    fn test_ephemeris_validated_not_yet_available() {
+        let nav = NavData::new();
+        let result = nav.ephemeris_validated(1);
+
+        assert_eq!(result.unwrap_err(), EphemerisLookupError::NotYetAvailable);
+    }
+
+    #[test]
+    fn test_ephemeris_validated_succeeds_for_consistent_healthy_set() {
+        let mut nav = NavData::new();
+        let sf1 = subframe1_healthy(0x10);
+        let sf2 = subframe2_with_iode(0x10);
+        let sf3 = subframe3_with_iode(0x10);
+
+        nav.ingest_subframe(4, &sf1);
+        nav.ingest_subframe(4, &sf2);
+        nav.ingest_subframe(4, &sf3);
+
+        assert!(nav.ephemeris_validated(4).is_ok());
+    }
+
+    #[test]
+    fn test_ephemeris_validated_detects_iode_mismatch() {
+        let mut nav = NavData::new();
+        let sf1 = subframe1_healthy(0x10);
+        let sf2 = subframe2_with_iode(0x10);
+        let sf3 = subframe3_with_iode(0x99); // несоответствие IODE
+
+        nav.ingest_subframe(6, &sf1);
+        nav.ingest_subframe(6, &sf2);
+        nav.ingest_subframe(6, &sf3);
+
+        let result = nav.ephemeris_validated(6);
+
+        assert!(matches!(
+            result,
+            Err(EphemerisLookupError::Invalid(
+                EphemerisValidationError::IodeMismatch { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_is_ephemeris_fresh_true_within_window() {
+        let mut nav = NavData::new();
+        let sf1 = subframe1_healthy(0x10);
+        let sf2 = subframe2_with_iode(0x10); // toe = 0 (по умолчанию в этом builder)
+        let sf3 = subframe3_with_iode(0x10);
+
+        nav.ingest_subframe(8, &sf1);
+        nav.ingest_subframe(8, &sf2);
+        nav.ingest_subframe(8, &sf3);
+
+        assert!(nav.is_ephemeris_fresh(8, 3600.0, 7200.0)); // 1 час после toe=0, окно 2 часа
+    }
+
+    #[test]
+    fn test_is_ephemeris_fresh_false_outside_window() {
+        let mut nav = NavData::new();
+        let sf1 = subframe1_healthy(0x10);
+        let sf2 = subframe2_with_iode(0x10);
+        let sf3 = subframe3_with_iode(0x10);
+
+        nav.ingest_subframe(8, &sf1);
+        nav.ingest_subframe(8, &sf2);
+        nav.ingest_subframe(8, &sf3);
+
+        assert!(!nav.is_ephemeris_fresh(8, 10_000.0, 7200.0)); // далеко за пределами окна 2 часа
+    }
+
+    #[test]
+    fn test_is_ephemeris_fresh_false_for_unknown_prn() {
+        let nav = NavData::new();
+
+        assert!(!nav.is_ephemeris_fresh(42, 0.0, 7200.0));
+    }
+
+    #[test]
+    fn test_nav_data_stores_utc_correction() {
+        let mut nav = NavData::new();
+        let correction = UtcCorrection {
+            delta_t_ls: 18,
+            delta_t_lsf: 18,
+            wn_lsf: 100,
+            dn: 1,
+        };
+
+        nav.set_utc_correction(correction);
+
+        assert_eq!(nav.utc_correction, Some(correction));
+    }
+
+    #[test]
+    fn test_nav_data_stores_ionospheric_model() {
+        let mut nav = NavData::new();
+        let model = IonosphericModel {
+            alpha: [0.0; 4],
+            beta: [0.0; 4],
+        };
+
+        nav.set_ionospheric_model(model);
+
+        assert!(nav.iono.is_some());
+    }
+
+    #[test]
+    fn test_nav_data_almanac_defaults_empty() {
+        let nav = NavData::new();
+
+        assert!(nav.almanac.is_empty());
     }
 }
