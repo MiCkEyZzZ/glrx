@@ -766,4 +766,101 @@ mod tests {
 
         assert!(nav.almanac.is_empty());
     }
+
+    #[test]
+    fn test_ephemeris_update_replaces_old() {
+        let mut nav = NavData::new();
+        // Сначала собираем эфемериды с IODE=0x10
+        let sf1 = subframe1_healthy(0x10);
+        let sf2 = subframe2_with_iode(0x10);
+        let sf3 = subframe3_with_iode(0x10);
+
+        nav.ingest_subframe(1, &sf1);
+        nav.ingest_subframe(1, &sf2);
+        nav.ingest_subframe(1, &sf3);
+
+        assert!(nav.ephemeris(1).is_some());
+
+        // Теперь приходят новые данные с IODE=0x20
+        let sf1_new = subframe1_healthy(0x20);
+        let sf2_new = subframe2_with_iode(0x20);
+        let sf3_new = subframe3_with_iode(0x20);
+
+        nav.ingest_subframe(1, &sf1_new);
+        nav.ingest_subframe(1, &sf2_new);
+        nav.ingest_subframe(1, &sf3_new);
+
+        // После обновления должны быть новые эфемериды
+        let eph = nav.ephemeris(1).unwrap();
+
+        assert_eq!(eph.orbit1.iode, 0x20);
+    }
+
+    #[test]
+    fn test_ingest_duplicate_subframe_does_not_trigger_completion() {
+        let mut nav = NavData::new();
+
+        let sf1 = subframe1_healthy(0x10);
+
+        // дважды один и тот же subframe
+        assert!(!nav.ingest_subframe(1, &sf1));
+        assert!(!nav.ingest_subframe(1, &sf1));
+
+        assert!(nav.ephemeris(1).is_none());
+    }
+
+    #[test]
+    fn test_pending_overwrite_keeps_consistency() {
+        let mut nav = NavData::new();
+
+        let sf1_a = subframe1_healthy(0x10);
+        let sf2 = subframe2_with_iode(0x10);
+
+        nav.ingest_subframe(1, &sf1_a);
+        nav.ingest_subframe(1, &sf2);
+
+        let sf1_b = subframe1_healthy(0x20);
+        nav.ingest_subframe(1, &sf1_b);
+
+        // после смены IODE сборка должна либо пересобраться корректно,
+        // либо старый pending должен быть инвалидирован
+        assert!(nav.ephemeris(1).is_none() || nav.ephemeris(1).unwrap().orbit1.iode == 0x20);
+    }
+
+    #[test]
+    fn test_clear_prn_removes_all_state() {
+        let mut nav = NavData::new();
+
+        let sf1 = subframe1_healthy(0x10);
+        nav.ingest_subframe(5, &sf1);
+
+        nav.clear_prn(5);
+
+        assert!(nav.ephemeris(5).is_none());
+        assert!(!nav.pending.contains_key(&5));
+        assert!(!nav.almanac.contains_key(&5));
+    }
+
+    #[test]
+    fn test_is_ephemeris_fresh_handles_week_wraparound() {
+        let mut nav = NavData::new();
+
+        let sf1 = subframe1_healthy(0x10);
+        let sf2 = subframe2_with_iode(0x10);
+        let sf3 = subframe3_with_iode(0x10);
+
+        nav.ingest_subframe(1, &sf1);
+        nav.ingest_subframe(1, &sf2);
+        nav.ingest_subframe(1, &sf3);
+
+        let eph = nav.ephemeris.get(&1).unwrap();
+
+        // искусственно ставим toe near week boundary
+        let mut eph = *eph;
+        eph.orbit1.toe = 604_700.0;
+
+        nav.ephemeris.insert(1, eph);
+
+        assert!(nav.is_ephemeris_fresh(1, 100.0, 7200.0));
+    }
 }
