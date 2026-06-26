@@ -6,6 +6,8 @@
 //! используемая потребителями выше по конвеёеру (observables, solver) для
 //! получения текущих эфемерид конкретного спутника.
 
+use std::f64::consts::TAU;
+
 use crate::navigation::{
     ephemeris::{BitCursor, concat_data_words},
     frame_decoder::DecodedSubframe,
@@ -75,6 +77,53 @@ impl IonosphericModel {
             ],
         })
     }
+
+    /// Вычисляет ионосферную задержку (секунды) для сигнала L1 метода
+    /// Клобухара.
+    ///
+    /// # Аргументы
+    ///
+    /// - `elevation_semicircles` — угол места спутника, полуокружности
+    ///   (`elevation_rad / π`)
+    /// - `azimuth_semicircles` — азимут спутника, полуокружности (не
+    ///   используется в этой упрощённой форме модели, оставлен для
+    ///   совместимости интерфейса с полной реализацией)
+    /// - `lat_semicircles`, `lon_semicircles` — геодезическая широта/долгота
+    ///   пользователя, полуокружности
+    /// - `gps_tow_s` — GPS-время суток (секунды, `0..86400`, можно передавать
+    ///   `tow mod 86400`)
+    #[must_use]
+    pub fn delay_seconds(
+        &self,
+        elevation_semicircles: f64,
+        lat_semicircles: f64,
+        lon_semicircles: f64,
+        gps_tow_s: f64,
+    ) -> f64 {
+        // Геомагнитная широта точки пересечения (упрощенно - модель
+        // использует геодезическую широту пользователя как приближение).
+        let phi_m = lat_semicircles + 0.064 * (lon_semicircles - 1.617).cos();
+        let amplitude = (self.alpha[0]
+            + self.alpha[1] * phi_m
+            + self.alpha[2] * phi_m * phi_m
+            + self.alpha[3] * phi_m * phi_m * phi_m)
+            .max(0.0);
+        let period = (self.beta[0]
+            + self.beta[1] * phi_m
+            + self.beta[2] * phi_m * phi_m
+            + self.beta[3] * phi_m * phi_m * phi_m)
+            .max(72_000.0);
+        let local_time = gps_tow_s.rem_euclid(86_400.0);
+        let x = TAU * (local_time - 50_400.0) / period;
+        let obliquity_factor = 1.0 + 16.0 * (0.53 - elevation_semicircles).powi(3);
+        let periodic_term = if x.abs() < 1.57 {
+            5e-9 + amplitude * (1.0 - x * x / 2.0 + x.powi(4) / 24.0)
+        } else {
+            5e-9
+        };
+
+        obliquity_factor * periodic_term
+    }
 }
 
 #[cfg(test)]
@@ -99,10 +148,70 @@ mod tests {
         }
     }
 
+    fn bits_from_u32(
+        value: u32,
+        len: usize,
+    ) -> Vec<bool> {
+        (0..len).rev().map(|i| (value >> i) & 1 == 1).collect()
+    }
+
+    fn pad_word(bits: &[bool]) -> [bool; 24] {
+        let mut word = [false; 24];
+        let start = 24 - bits.len();
+
+        word[start..].copy_from_slice(bits);
+
+        word
+    }
+
     #[test]
     fn test_iono_parse_page18_returns_none_for_wrong_subframe_id() {
         let sf = make_subframe(1, [[false; 24]; 10]);
 
         assert!(IonosphericModel::parse_page18(&sf).is_none());
+    }
+
+    #[test]
+    fn test_iono_parse_page18_extracts_alpha0() {
+        let mut words = [[false; 24]; 10];
+        let mut w0 = Vec::new();
+
+        w0.extend(bits_from_u32(1, 8)); // alpha0 = 1
+        w0.extend(bits_from_u32(0, 8));
+        w0.extend(bits_from_u32(0, 8));
+
+        words[2] = pad_word(&w0);
+
+        let sf = make_subframe(4, words);
+        let iono = IonosphericModel::parse_page18(&sf).unwrap();
+        let expected = 1.0 * 2f64.powi(-30);
+
+        assert!((iono.alpha[0] - expected).abs() < 1e-15);
+    }
+
+    #[test]
+    fn test_iono_delay_seconds_is_nonnegative_for_reasonable_inputs() {
+        let model = IonosphericModel {
+            alpha: [1e-8, 1e-8, 1e-8, 1e-8],
+            beta: [80_000.0, 0.0, 0.0, 0.0],
+        };
+        let delay = model.delay_seconds(0.3, 0.5, 0.5, 43_200.0);
+
+        assert!(delay >= 0.0);
+        assert!(delay.is_finite());
+    }
+
+    #[test]
+    fn test_iono_delay_seconds_zero_alpha_gives_minimum_delay() {
+        let model = IonosphericModel {
+            alpha: [0.0; 4],
+            beta: [80_000.0, 0.0, 0.0, 0.0],
+        };
+        let delay = model.delay_seconds(0.3, 0.5, 0.5, 0.0);
+
+        // With zero amplitude, periodic_term should reduce to the 5ns floor
+        // scaled by obliquity factor.
+        assert!(delay > 0.0);
+        assert!(delay < 1e-7);
     }
 }
