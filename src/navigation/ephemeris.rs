@@ -1228,4 +1228,35 @@ mod tests {
             "eccentricity should noticeably affect position, diff={diff}"
         );
     }
+
+    #[test]
+    fn test_corrected_time_diff_no_wrap() {
+        let dt = Ephemeris::corrected_time_diff(1000.0, 900.0);
+
+        assert!((dt - 100.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_corrected_time_diff_negative_wrap() {
+        // t << t0, но с переходом через границу недели
+        let t = 100.0;
+        let t0 = 604_700.0;
+
+        let dt = Ephemeris::corrected_time_diff(t, t0);
+
+        // ожидаем маленькое положительное значение (~-604600 + 604800)
+        assert!(dt > 0.0);
+        assert!(dt < 500.0);
+    }
+
+    #[test]
+    fn test_bitcursor_signed_32bit_boundary() {
+        // 32 бита: только знак = 1 => минимальное значение i32
+        let bits = [true; 32];
+        let c = BitCursor::new(&bits);
+
+        let v = c.signed(0, 32);
+
+        assert_eq!(v, -1);
+    }
 }
