@@ -57,7 +57,7 @@ pub const SPEED_OF_LIGHT: f64 = 299_792_458.0;
 
 /// Причина, по которой набор эфемерид считается непригодным для
 /// вычисления позиции.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EphemerisValidationError {
     /// `sv+health != 0` - спутник помечен как нездоровый
     UnhealthySatellite {
