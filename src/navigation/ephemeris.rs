@@ -84,16 +84,18 @@ pub enum EphemerisValidationError {
     },
 }
 
-/// Курсор для извлечения битовых полей произвольной длины из
-/// конкатинированного потока информационных слов subframe.
+/// Курсор для извлечения битовых полей из конкатенированного subframe.
 pub struct BitCursor<'a> {
     bits: &'a [bool],
 }
 
-/// Параметры часов спутника и health/IODC из Subframe 1.
+/// Параметры часов спутника (Subframe 1).
 ///
-/// Масштабные коэффициенты согласно GPS ICD-200 (см. `docs/NAVIGATION.md`):
-/// `toc`: 2⁴ с, `af2`: 2⁻⁵⁵ с/с², `af1`: 2⁻⁴³ с/с, `af0`: 2⁻³¹ с.
+/// Масштабирование согласно IS-GPS-200:
+/// - `toc`: 2⁴ с,
+/// - `af2`: 2⁻⁵⁵ с/с²,
+/// - `af1`: 2⁻⁴³ с/с,
+/// - `af0`: 2⁻³¹ с.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClockParams {
     /// Номер недели GPS (10 бит, mod 1024 — week rollover решается выше по
@@ -101,7 +103,7 @@ pub struct ClockParams {
     pub week_number: u16,
 
     /// Индекс точности пользовательского диапазона (4 бита)
-    pub ura_index: i8,
+    pub ura_index: u8,
 
     /// Health-флаг спутника (6 бит, `0` = healthy).
     pub sv_health: u8,
@@ -123,8 +125,7 @@ pub struct ClockParams {
     pub af0: f64,
 }
 
-/// Параметры орбиты, часть 1 (Subframe 2): `iode`, `crs`, `delta_n`, `m0`,
-/// `cuc`, `e`, `cus`, `sqrt_a`, `toe`.
+/// Орбитальные параметры (Subframe 2).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OrbitPart1 {
     /// Issue of Data, Ephemeris (8 бит) — должен совпадать с нижними 8
@@ -156,8 +157,7 @@ pub struct OrbitPart1 {
     pub toe: f64,
 }
 
-/// Параметры орбиты, часть 2 (Subframe 3): `cic`, `omega0`, `cis`, `i0`,
-/// `crc`, `omega`, `omega_dot`, `idot`.
+/// Орбитальные параметры (Subframe 3).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OrbitPart2 {
     /// Поправка наклонения, косинусный член (рад), масштаб 2⁻²⁹.
@@ -190,10 +190,9 @@ pub struct OrbitPart2 {
     pub idot: f64,
 }
 
-/// Полный комплект эфемерид одного спутника, собранный из Subframe 1, 2, 3.
+/// Полный набор эфемерид спутника.
 ///
-/// Содержит все параметры, необходимые для вычисления позиции спутника в
-/// ECEF на произвольный момент времени GPS.
+/// Используется для вычисления положения спутника в ECEF.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ephemeris {
     /// PRN спутника
@@ -353,7 +352,15 @@ impl Ephemeris {
         let mut ek = mk;
 
         for _ in 0..10 {
-            ek = mk + o1.e * ek.sin();
+            let next = mk + o1.e * ek.sin();
+
+            if (next - ek).abs() < 1e-13 {
+                ek = next;
+
+                break;
+            }
+
+            ek = next;
         }
 
         // 5. Истинная аномалия
@@ -381,7 +388,7 @@ impl Ephemeris {
         let yk_prime = rk * uk.sin();
 
         // 10. Долгота восходящего узла с учётом вращения Земли.
-        let omega_k = o2.omega + (o2.omega_dot - WGS84_OMEGA_E) * tk - WGS84_OMEGA_E * o1.toe;
+        let omega_k = o2.omega0 + (o2.omega_dot - WGS84_OMEGA_E) * tk - WGS84_OMEGA_E * o1.toe;
 
         // 11. ECEF координаты.
         let cos_omega_k = omega_k.cos();
@@ -486,7 +493,7 @@ pub fn parse_subframe1(subframe: &DecodedSubframe) -> Option<ClockParams> {
     // Word 3: week(10) + c/a или p (2, не используется) + ura(4) + health(6) + iodc_msb(2)
     let week_number = c.unsigned(0, 10) as u16;
     // биты 10-11: code on L2 (не используется здесь)
-    let ura_index = c.signed(12, 4) as i8;
+    let ura_index = c.unsigned(12, 4) as u8;
     let sv_health = c.unsigned(16, 6) as u8;
     let iodc_msb = c.unsigned(22, 2);
 
