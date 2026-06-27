@@ -4,9 +4,13 @@
 [![Rust](https://img.shields.io/badge/rust-1.96+-orange.svg)](https://www.rust-lang.org/)
 
 **GLRX** is a modular GNSS SDR receiver implemented in Rust, focused on
-layered DSP pipelines, satellite tracking, and navigation processing.
+layered DSP pipelines, satellite tracking, navigation message decoding,
+and precise positioning.
 
 ## Architecture
+
+The diagram below represents the current processing flow implemented in
+GLRX.
 
 ```mermaid
 flowchart TD
@@ -36,18 +40,64 @@ G --> I[Multi-GNSS Navigation]
 I --> J[PVT Solution]
 ```
 
+## Planned Workspace Architecture
+
+As GLRX evolves, the project is planned to transition into a layered
+multi-crate workspace. This architecture separates hardware interfaces,
+DSP algorithms, navigation logic, shared types, and user-facing
+applications while keeping each component independently testable.
+
+```mermaid
+flowchart TD
+
+A[glrx-cli] --> B[glrx-receiver]
+
+S[glrx-sdr] --> B
+
+B --> C[Signal Orchestration Layer]
+
+C --> D[glrx-dsp]
+
+D --> D1[Acquisition Algorithms]
+D --> D2[Tracking Loops]
+
+D1 --> E[glrx-core]
+D2 --> E
+
+E --> E1[Navigation Engine]
+E --> E2[Time / State Estimation]
+
+E1 --> F[PVT Solution]
+
+E2 --> F
+
+E --> G[glrx-types]
+
+D --> G
+
+E --> G
+
+E --> H[glrx-error]
+
+B --> H
+D --> H
+E --> H
+```
+
 ## Features
 
-- Read IQ data from files or SDR devices.
-- Basic signal processing primitives: mixing, filtering, resampling.
-- Satellite acquisition using FFT-based search.
-- Tracking loops: DLL, PLL, FLL.
-- Navigation message and ephemeris decoding.
-- Pseudorange computation and position estimation (Least Squares, Kalman filtering).
-- Multi-channel satellite tracking.
-- Output in standard formats (NMEA / UBX).
-- Integration with external tools: **GLOS**, **GLINT**, **USMET**.
-- Built-in support for testing, benchmarking, and observability.
+- Read I/Q data from files or SDR devices.
+- FFT-based satellite acquisition.
+- DLL, PLL and FLL tracking loops.
+- Navigation message decoding.
+- GPS ephemeris decoding.
+- Multi-GNSS navigation pipeline.
+- Pseudorange computation.
+- Position estimation (Least Squares / Kalman).
+- Multi-channel receiver architecture.
+- Export to NMEA / UBX.
+- Integration with **USMET**, **GLINT**, and **GLOS**.
+- Extensive unit tests, benchmarks and documentation.
 
 ## Quick Start
 
@@ -71,7 +121,7 @@ cargo build --workspace --release
 cargo test --workspace
 ```
 
-### Run (simulator mode)
+### Run (simulator)
 
 ```bash
 cargo run --release --bin glrx -- \
@@ -84,21 +134,29 @@ cargo run --release --bin glrx -- \
 
 ## Development Roadmap
 
-1. IQ reader and DSP primitives
-2. FFT-based satellite acquisition
-3. Tracking loops (DLL / PLL / FLL) and multi-channel tracking
-4. Navigation message and ephemeris decoding
-5. Pseudorange computation and position solver
-6. NMEA / UBX output and integration with GLINT / USMET
-7. High-level processing pipeline and time synchronization
-8. Performance optimization (SIMD, latency)
-9. Observability, testing, and validation
+- DSP primitives
+- Satellite acquisition
+- Tracking loops
+- Navigation message decoding
+- Ephemeris decoding
+- Pseudorange computation
+- PVT solver
+- Multi-GNSS support
+- NMEA / UBX output
+- SDR device integration
+- Workspace modularization
+- Performance optimization
+- Observability and validation
 
 ## Goals
 
-- Build a modular GNSS receiver implemented entirely in Rust.
-- Ensure experiment reproducibility and system extensibility.
-- Enable seamless integration with telemetry analysis and storage systems.
+GLRX aims to provide a modern, modular GNSS SDR receiver written entirely
+in Rust with a strong emphasis on correctness, maintainability,
+reproducibility, and extensibility.
+
+The long-term objective is to build a reusable ecosystem of crates for
+GNSS signal processing, navigation, and positioning that can be used in
+both research and production environments.
 
 ## License
 

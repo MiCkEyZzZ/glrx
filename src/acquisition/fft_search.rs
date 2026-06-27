@@ -1,20 +1,20 @@
-//! FFT-based GNSS acquisition: Parallel Code Search (PCPS).
+//! FFT-основанное GNSS-обнаружение: Parallel Code Search (PCPS).
 //!
-//! # Algorithm
+//! # Алгоритм
 //!
-//! For each Doppler trial frequency `f_d` in the search grid:
+//! Для каждой пробной доплеровской частоты `f_d` в сетке поиска:
 //!
 //! ```text
-//! 1. wiped[n] = signal[n] × exp(−j·2π·f_d·n/fs)   carrier wipe-off
+//! 1. wiped[n] = signal[n] × exp(−j·2π·f_d·n/fs)   подавление несущей
 //! 2. S[k]     = FFT(wiped)
-//! 3. C[k]     = FFT(prn_code)                       pre-computed
+//! 3. C[k]     = FFT(prn_code)                      предварительно вычислено
 //! 4. R[k]     = S[k] × conj(C[k])
-//! 5. power[n] = |IFFT(R)|²                          correlation surface
-//!  6. peak     = argmax(power)  →  code_phase
+//! 5. power[n] = |IFFT(R)|²                         корреляционная поверхность
+//! 6. peak     = argmax(power)  →  code_phase
 //! ```
 //!
-//! The 2-D surface (Doppler * `code_phase`) is scanned for each PRN.
-//! A detection is declared when `peak_power / noise+floor > cfar_threshold`.
+//! 2-D поверхность (доплер * `code_phase`) сканируется для каждого PRN.
+//! Обнаружение объявляется, когда `peak_power / noise+floor > cfar_threshold`.
 
 use std::collections::HashMap;
 
@@ -26,67 +26,70 @@ use crate::signal::{
     prn_code::{GPS_CODE_LENGTH, PrnCodeCache},
 };
 
-/// Configuration for the acquisition frequency/Doppler search grid.
+/// Конфигурация частотной сетки поиска (Doppler search grid) для процедуры захвата.
+///
+/// Используется PCPS-алгоритмом для перебора гипотез доплеровского сдвига
+/// и формирования 2-D корреляционной поверхности.
 #[derive(Debug, Clone)]
 pub struct SearchConfig {
-    /// Minimum Doppler to search in Hz (e.g. -`10_000`)
+    /// Минимальная доплеровская частота поиска в Гц (например, -`10_000`)
     pub doppler_min_hz: f64,
 
-    /// Maximum Doppler to search in Hz (e.g. +`10_000`)
+    /// Максимальная доплеровская частота поиска в Гц (например, +`10_000`)
     pub doppler_max_hz: f64,
 
-    /// Step between Doppler trials in Hz (e.g. `500`)
+    /// Шаг перебора доплеровских гипотез в Гц (например, `500`)
     pub doppler_step_hz: f64,
 
-    /// CFAR detection threshold: `peak/noise_floor` ratio.
-    /// Typical values: 2.5 (loose)..4.0 (strict).
+    /// CFAR-порог обнаружения: отношение `peak/noise_floor`.
+    /// Типичные значения: 2.5 (мягкий порог)..4.0 (жёсткий порог).
     pub cfar_threshold: f32,
 }
 
-/// Coarse PCPS acquisition result for one PRN.
+/// Результат грубого захвата (coarse acquisition) PCPS для одного PRN.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {
-    /// PRN number (GPS: 1-32)
+    /// Номер PRN (GPS: 1–32)
     pub prn: u8,
 
-    /// Coarse Doppler frequency from the grid in Hz
+    /// Грубая доплеровская частота из сетки поиска в Гц
     pub doppler_coarse_hz: f64,
 
-    /// Fine Doppler estimate (after sub-bin interpolation) in Hz.
+    /// Уточнённая оценка доплера (после суббинной интерполяции) в Гц
     pub doppler_fine_hz: f64,
 
-    /// Code phase in samples (`0..block_size`).
+    /// Кодовая фаза в сэмплах (`0..block_size`)
     pub code_phase_samples: usize,
 
-    /// Code phase in chips (0.0..1023.0).
+    /// Кодовая фаза в чипах (0.0..1023.0)
     pub code_phase_chips: f64,
 
-    /// Peak correlation power (linear).
+    /// Пиковая мощность корреляции (линейная шкала)
     pub peak_power: f32,
 
-    /// Estimated noise floor power (mean of the surface).
+    /// Оценка уровня шума (среднее по поверхности)
     pub noise_floor: f32,
 
-    /// Peak-to-noise-floor ratio. Used for CFAR detection.
+    /// Отношение пик/шум, используется для CFAR-обнаружения
     pub peak_to_noise: f32,
 
-    /// Whether this result exceeds the CFAR detection threshold.
+    /// Превышает ли результат CFAR-порог обнаружения
     pub detected: bool,
 }
 
-/// 2-D search surface (internal)
+/// 2D поверхность поиска (внутренняя структура)
 struct SearchSurface {
-    /// Row = Doppler bin index, Col = code-phase sample
+    /// Строка = бин Доплера, столбец = отсчёт кодовой фазы
     data: Vec<Vec<f32>>,
     doppler_trials: Vec<f64>,
 }
 
-/// Full PCPS acquisition engine.
+/// Полный движок PCPS-захвата.
 ///
-/// Holds pre-computed PRN FFTs and an [`FftEngine`] reused across all
-/// Doppler trials. Call [`PcpsSearch::precompute_all`] once, then
-/// [`PcpsSearch::search_prn`] or [`PcpsSearch::search_all`] per acquisition
-/// attempt.
+/// Хранит предвычисленные FFT PRN-кодов и [`FftEngine`], переиспользуемый на
+/// всех пробах Доплера. Вызовите [`PcpsSearch::precompute_all`] один раз, затем
+/// используйте [`PcpsSearch::search_prn`] или [`PcpsSearch::search_all`] для
+/// каждого цикла захвата.
 pub struct PcpsSearch {
     fft: FftEngine,
     block_size: usize,
@@ -96,11 +99,11 @@ pub struct PcpsSearch {
 }
 
 impl SearchConfig {
-    /// The number of Doppler trials in this configuration.
+    ///  Количество проб Доплера в данной конфигурации.
     ///
     /// # Panics
     ///
-    /// Panics if:
+    /// Паника возникает если:
     /// - `doppler_step_hz <= 0.0`
     /// - `doppler_max_hz < doppler_min_hz`
     #[must_use]
@@ -113,7 +116,7 @@ impl SearchConfig {
         usize::try_from(bins as i64).expect("invalid Doppler search configuration") + 1
     }
 
-    /// Iterator over all Doppler trial frequencies.
+    /// Итератор по всем частотам Доплера для проб.
     pub fn doppler_trials(&self) -> impl Iterator<Item = f64> {
         let min = self.doppler_min_hz;
         let step = self.doppler_step_hz;
@@ -124,7 +127,7 @@ impl SearchConfig {
 }
 
 impl SearchSurface {
-    /// Construct a new search surface with the given Doppler trials and block size.
+    /// Создать новую поверхность поиска с заданными пробами Доплера и размером блока.
     #[must_use]
     fn new(
         doppler_trials: Vec<f64>,
@@ -146,8 +149,8 @@ impl SearchSurface {
         self.data[doppler_idx] = power;
     }
 
-    /// Find the global maximum over the entire 2-D surface.
-    /// Returns (`doppler_idx`, `code_phase_samples`, `peak_power`).
+    /// Найти глобальный максимум по всей 2D поверхности.
+    /// Возвращает (`doppler_idx`, `code_phase_samples`, `peak_power`).
     fn global_peak(&self) -> (usize, usize, f32) {
         let mut best_d = 0usize;
         let mut best_c = 0usize;
@@ -166,7 +169,7 @@ impl SearchSurface {
         (best_d, best_c, best_p)
     }
 
-    /// Mean power across the entire surface (noise floor estimate).
+    /// Средняя мощность по всей поверхности (оценка шумового фона).
     fn mean_power(&self) -> f32 {
         let total: f32 = self.data.iter().flatten().sum();
         let count = self.data.len() * self.data[0].len();
