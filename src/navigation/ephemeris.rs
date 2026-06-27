@@ -5,9 +5,9 @@
 //! ни псевдодальность, ни позиционное решение. Этот модуль потребляет
 //! [`crate::navigation::frame_decoder::DecodedSubframe`] и извлекает из
 //! навигационных слов параметры орбиты Кеплера и поправки часов спутника
-//! спутника согласно IS-GPS-200
+//! согласно IS-GPS-200
 //!
-//! //! # Dataflow
+//! # Dataflow
 //!
 //! Ниже показан pipeline обработки навигационного сообщения:
 //!
@@ -84,7 +84,7 @@ pub enum EphemerisValidationError {
     },
 }
 
-/// Курсор для извлечения битовых полей из конкатенированного subframe.
+/// Курсор для извлечения битовых полей из конкатенированного массива битов.
 pub struct BitCursor<'a> {
     bits: &'a [bool],
 }
@@ -337,18 +337,18 @@ impl Ephemeris {
         let o1 = &self.orbit1;
         let o2 = &self.orbit2;
 
-        // 1. Большая полуось и среднее движение
+        // Большая полуось и среднее движение
         let a = o1.sqrt_a * o1.sqrt_a;
         let n0 = (WGS84_MU / (a * a * a)).sqrt();
         let n = n0 + o1.delta_n;
 
-        // 2. Время с момента toe (с коррекцией перехода через границу недели)
+        // Время с момента toe (с коррекцией перехода через границу недели)
         let tk = Self::corrected_time_diff(t, o1.toe);
 
-        // 3. Средняя аномалия
+        // Средняя аномалия
         let mk = o1.m0 + n * tk;
 
-        // 4. Эксцентрическая аномалия (интеграция Кеплера)
+        // Эксцентрическая аномалия (интеграция Кеплера)
         let mut ek = mk;
 
         for _ in 0..10 {
@@ -363,34 +363,34 @@ impl Ephemeris {
             ek = next;
         }
 
-        // 5. Истинная аномалия
+        // Истинная аномалия
         let sin_vk = (1.0 - o1.e * o1.e).sqrt() * ek.sin();
         let cos_vk = ek.cos() - o1.e;
         let vk = sin_vk.atan2(cos_vk);
 
-        // 6. Аргумент широты
+        // Аргумент широты
         let phi_k = vk + o2.omega;
         let sin_2phi = (2.0 * phi_k).sin();
         let cos_2phi = (2.0 * phi_k).cos();
 
-        // 7. Коррекция второго порядка
+        // Коррекция второго порядка
         let delta_uk = o1.cus * sin_2phi + o1.cuc * cos_2phi;
         let delta_rk = o1.crs * sin_2phi + o2.crc * cos_2phi;
         let delta_ik = o2.cis * sin_2phi + o2.cic * cos_2phi;
 
-        // 8. Скорректированные значения
+        // Скорректированные значения
         let uk = phi_k + delta_uk;
         let rk = a * (1.0 - o1.e * ek.cos()) + delta_rk;
         let ik = o2.i0 + delta_ik + o2.idot * tk;
 
-        // 9. Позиция в плоскости орбитыю
+        // Позиция в плоскости орбиты.
         let xk_prime = rk * uk.cos();
         let yk_prime = rk * uk.sin();
 
-        // 10. Долгота восходящего узла с учётом вращения Земли.
+        // Долгота восходящего узла с учётом вращения Земли.
         let omega_k = o2.omega0 + (o2.omega_dot - WGS84_OMEGA_E) * tk - WGS84_OMEGA_E * o1.toe;
 
-        // 11. ECEF координаты.
+        // Координаты спутника в системе ECEF.
         let cos_omega_k = omega_k.cos();
         let sin_omega_k = omega_k.sin();
         let cos_ik = ik.cos();
@@ -515,7 +515,7 @@ pub fn parse_subframe1(subframe: &DecodedSubframe) -> Option<ClockParams> {
     let af0_raw = c.signed(80, 22); // word6 bits 9-24 + word7 bits 1-6
 
     let iodc = (iodc_msb << 8) | iodc_lsb;
-    let _ = t_gd_raw; // t_gd зарезервирован для будущей коррекции группового интервала
+    let _ = t_gd_raw; // TODO: использовать при вычислении поправки групповой задержки
 
     Some(ClockParams {
         week_number,
@@ -571,7 +571,7 @@ pub fn parse_subframe2(subframe: &DecodedSubframe) -> Option<OrbitPart1> {
         iode,
         crs: f64::from(crs_raw) * 2f64.powi(-5),
         delta_n: f64::from(delta_n_raw) * 2f64.powi(-43) * PI,
-        m0: sign_extend_32(m0_combined) * 2f64.powi(-31) * PI,
+        m0: f64::from(sign_extend_32(m0_combined)) * 2f64.powi(-31) * PI,
         cuc: f64::from(cuc_raw) * 2f64.powi(-29),
         e: f64::from(e_combined) * 2f64.powi(-33),
         cus: f64::from(cus_raw) * 2f64.powi(-29),
@@ -620,20 +620,22 @@ pub fn parse_subframe3(subframe: &DecodedSubframe) -> Option<OrbitPart2> {
 
     Some(OrbitPart2 {
         cic: f64::from(cic_raw) * 2f64.powi(-29),
-        omega0: sign_extend_32(omega0_combined) * 2f64.powi(-31) * PI,
+        omega0: f64::from(sign_extend_32(omega0_combined)) * 2f64.powi(-31) * PI,
         cis: f64::from(cis_raw) * 2f64.powi(-29),
-        i0: sign_extend_32(i0_combined) * 2f64.powi(-31) * PI,
+        i0: f64::from(sign_extend_32(i0_combined)) * 2f64.powi(-31) * PI,
         crc: f64::from(crc_raw) * 2f64.powi(-5),
-        omega: sign_extend_32(omega_combined) * 2f64.powi(-31) * PI,
+        omega: f64::from(sign_extend_32(omega_combined)) * 2f64.powi(-31) * PI,
         omega_dot: f64::from(omega_dot_raw) * 2f64.powi(-43) * PI,
         iode,
         idot: f64::from(idot_raw) * 2f64.powi(-43) * PI,
     })
 }
 
-/// Расширяет знак 32-битного значения, хранимого в `u32`, в `f64`
-fn sign_extend_32(raw: u32) -> f64 {
-    f64::from(raw.cast_signed())
+/// Интерпретирует 32-битное значение как `i32`,
+/// сохраняя его битовое представление (two's complement).
+#[must_use]
+const fn sign_extend_32(raw: u32) -> i32 {
+    raw.cast_signed()
 }
 
 #[cfg(test)]
@@ -779,7 +781,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cursor_unsigned_partial_rabge() {
+    fn test_cursor_unsigned_partial_range() {
         let bits = [false, true, true, false, true];
         let c = BitCursor::new(&bits);
 
@@ -1258,7 +1260,7 @@ mod tests {
 
     #[test]
     fn test_bitcursor_signed_32bit_boundary() {
-        // 32 бита: только знак = 1 => минимальное значение i32
+        // Все 32 бита равны единице => -1 в дополнительном коде.
         let bits = [true; 32];
         let c = BitCursor::new(&bits);
 

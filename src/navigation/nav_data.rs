@@ -16,6 +16,18 @@ use crate::navigation::{
     frame_decoder::DecodedSubframe,
 };
 
+/// Половина GPS-недели в секундах (используется для коррекции wrap-around TOW).
+const HALF_WEEK: f64 = 302_400.0;
+
+/// Длительность GPS-недели в секундах.
+const WEEK: f64 = 604_800.0;
+
+/// Эмпирический коэффициент усиления функции наклона (elevation mapping).
+pub const OBLIQUITY_GAIN: f64 = 16.0;
+
+/// Смещение функции наклона по углу места (semi-circles).
+pub const ELEVATION_BIAS: f64 = 0.53;
+
 /// Причина, по которой эфемериды для PRN недоступны или невалидны при
 /// запросе через `NavData::ephemeris_validated`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,8 +99,8 @@ pub struct PendingEphemeris {
     orbit2: Option<OrbitPart2>,
 }
 
-/// Хранилище текущего навигационного состояния приёмника: эфемерид по
-/// каждому отслеживаемому PRN, ионосферная модель, almanoc, UTC-коррекция.
+/// Навигационное состояние приёмника:
+/// эфемериды, ионосферная модель, almanac и UTC-коррекция.
 ///
 /// # Типичный поток использования
 ///
@@ -205,7 +217,8 @@ impl IonosphericModel {
             .max(72_000.0);
         let local_time = gps_tow_s.rem_euclid(86_400.0);
         let x = TAU * (local_time - 50_400.0) / period;
-        let obliquity_factor = 1.0 + 16.0 * (0.53 - elevation_semicircles).powi(3);
+        let obliquity_factor =
+            1.0 + OBLIQUITY_GAIN * (ELEVATION_BIAS - elevation_semicircles).powi(3);
         let periodic_term = if x.abs() < 1.57 {
             5e-9 + amplitude * (1.0 - x * x / 2.0 + x.powi(4) / 24.0)
         } else {
@@ -296,6 +309,7 @@ impl NavData {
             && let Some(eph) = entry.try_assemble(prn)
         {
             self.ephemeris.insert(prn, eph);
+            self.pending.remove(&prn);
 
             return true;
         }
@@ -373,10 +387,10 @@ impl NavData {
 
         let mut dt = current_tow - eph.orbit1.toe;
 
-        if dt > 302_400.0 {
-            dt -= 604_800.0;
-        } else if dt < -302_400.0 {
-            dt += 604_800.0;
+        if dt > HALF_WEEK {
+            dt -= WEEK;
+        } else if dt < -HALF_WEEK {
+            dt += WEEK;
         }
 
         dt.abs() <= max_age_s
