@@ -1,30 +1,30 @@
-//! Post-correlation detection: CFAR, peak validation, SNR estimation.
+//! Посткорреляционное обнаружение: CFAR, валидация пиков, оценка SNR.
 //!
-//! After the PCPS correlator produce a 2-D power surface, this module
-//! decides whether a satellite is present and estimates signal quality.
+//! После того как PCPS-коррелятор формирует 2-D поверхность мощности,
+//! данный модуль решает, присутствует ли спутник, и оценивает качество сигнала.
 //!
-//! # CFAR (Constant False-Alarm Rate) Detection
+//! # CFAR (Constant False-Alarm Rate) обнаружение
 //!
-//! The detector computes a **noise floor** estimate from the correlation
-//! surface and compares the peel to a threshold:
+//! Детектор вычисляет оценку **уровня шума** на основе корреляционной
+//! поверхности и сравнивает пик с порогом:
 //!
 //! ```text
 //! detected = peak_power / noise_floor >= threshold
 //! ```
 //!
-//! Two noise floor estimators are available:
+//! Доступны два оценивателя уровня шума:
 //!
-//! | Estimator | Description | Use case |
-//! |-----------|-------------|----------|
-//! | `MeanCfar` | Mean of the entire surface | Simple, fast |
-//! | `TrimmedMeanCfar` | Mean excluding the top N% of cells | Robust multi-signal |
+//! | Оцениватель       | Описание                        | Сценарий использования            |
+//! |-------------------|---------------------------------|-----------------------------------|
+//! | `MeanCfar`        | Среднее по всей поверхности     | Простой, быстрый                  |
+//! | `TrimmedMeanCfar` | Среднее без верхних N% значений | Устойчив к множественным сигналам |
 //!
-//! # Peak validation
+//! # Валидация пика
 //!
-//! A single-sample peak can be a side-lobe artefact. The detector also checks:
-//! - **Second-peak ratio**: the strongest secondary peak (>1 chip away
-//!   from the main peak) should be significantly weaker.
-//! - **Code-phase continuity**: optional tracking of phase across epochs.
+//! Одноточечный пик может быть артефактом бокового лепестка. Детектор также проверяет:
+//! - **Отношение второго пика**: самый сильный вторичный пик (>1 чипа от
+//!   основного пика) должен быть существенно слабее.
+//! - **Непрерывность кода (code-phase continuity)**: опциональное отслеживание фазы между эпохами.
 
 use crate::acquisition::fft_search::SearchResult;
 
@@ -347,6 +347,10 @@ impl Default for DetectorConfig {
         }
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Tests
+////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod tests {
