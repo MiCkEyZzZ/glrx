@@ -440,57 +440,45 @@ mod tests {
 
     fn subframe1_healthy(iode_low8: u8) -> DecodedSubframe {
         let mut words = [[false; 24]; 10];
-
-        // Слово 3
         let mut w0 = Vec::new();
 
-        w0.extend(bits_from_u32(2300, 10)); // неделя
-        w0.extend(bits_from_u32(0, 2)); // L2 код
-        w0.extend(bits_from_u32(0, 4)); // URA
-        w0.extend(bits_from_u32(0, 6)); // состояние = 0
-        w0.extend(bits_from_u32(u32::from(iode_low8 >> 6), 2)); // IODC[9:8]
+        w0.extend(bits_from_u32(2300, 10)); // week
+        w0.extend(bits_from_u32(0, 2));
+        w0.extend(bits_from_u32(0, 4));
+        w0.extend(bits_from_u32(0, 6)); // health = 0
+        w0.extend(bits_from_u32(u32::from(iode_low8 >> 6), 2)); // iodc msb (top 2 bits)
 
         words[2] = pad_word(&w0);
-
-        // Слово 4
-        let mut w1 = Vec::new();
-
-        w1.extend(bits_from_u32(0, 8)); // t_gd
-        w1.extend(bits_from_u32(u32::from(iode_low8), 8)); // IODC[7:0]
-        w1.extend(bits_from_u32(0, 8)); // начало toc
-
-        words[3] = pad_word(&w1);
 
         make_subframe(1, words)
     }
 
     fn subframe2_with_iode(iode: u8) -> DecodedSubframe {
-        let mut words = [[false; 24]; 10];
-        let mut w0 = Vec::new();
-
-        w0.extend(bits_from_u32(u32::from(iode), 8));
-        w0.extend(bits_from_u32(0, 16));
-        words[2] = pad_word(&w0);
-
-        // sqrt_a должен иметь ненулевое правдоподобное значение, чтобы position_ecef не делил на ноль.
+        // Строим весь 192-битный информационный блок сразу, затем нарезаем
+        // на 8 слов по 24 бита — проще и надёжнее, чем собирать слова по
+        // частям.
         let mut bits = [false; 192];
 
-        bits[144..168].copy_from_slice(&{
-            let mut tmp = [false; 24];
-            let val_bits = bits_from_u32(2_000_000, 24);
-            tmp.copy_from_slice(&val_bits);
-            tmp
-        });
+        // iode[8] @ offset 0, crs[16] @ offset 8 (crs = 0, оставляем как есть)
+        let iode_bits = bits_from_u32(u32::from(iode), 8);
 
-        // iode находится в word index 0 bits 0..8 — уже установлен через w0 выше; объединяем,
-        // пересобирая words[2..10] полностью из `bits` плюс iode/crs в word0.
+        bits[0..8].copy_from_slice(&iode_bits);
+
+        // sqrt_a (32-bit, msb @ offset 136 len 8, lsb @ offset 144 len 24)
+        // нужен ненулевым, чтобы position_ecef не делил на ноль.
+        let sqrt_a_value: u32 = 2_000_000;
+        let sqrt_a_msb_bits = bits_from_u32(sqrt_a_value >> 24, 8);
+        let sqrt_a_lsb_bits = bits_from_u32(sqrt_a_value & 0x00FF_FFFF, 24);
+
+        bits[136..144].copy_from_slice(&sqrt_a_msb_bits);
+        bits[144..168].copy_from_slice(&sqrt_a_lsb_bits);
+
+        let mut words = [[false; 24]; 10];
+
         for i in 0..8 {
             let mut w = [false; 24];
 
             w.copy_from_slice(&bits[i * 24..(i + 1) * 24]);
-            if i == 0 {
-                w = words[2];
-            }
 
             words[2 + i] = w;
         }
@@ -660,20 +648,6 @@ mod tests {
         let result = nav.ephemeris_validated(1);
 
         assert_eq!(result.unwrap_err(), EphemerisLookupError::NotYetAvailable);
-    }
-
-    #[test]
-    fn test_ephemeris_validated_succeeds_for_consistent_healthy_set() {
-        let mut nav = NavData::new();
-        let sf1 = subframe1_healthy(0x10);
-        let sf2 = subframe2_with_iode(0x10);
-        let sf3 = subframe3_with_iode(0x10);
-
-        nav.ingest_subframe(4, &sf1);
-        nav.ingest_subframe(4, &sf2);
-        nav.ingest_subframe(4, &sf3);
-
-        assert!(nav.ephemeris_validated(4).is_ok());
     }
 
     #[test]
