@@ -26,6 +26,7 @@
 
 pub mod acquisition;
 pub mod navigation;
+pub mod observables;
 pub mod pipeline;
 pub mod rf;
 pub mod signal;
