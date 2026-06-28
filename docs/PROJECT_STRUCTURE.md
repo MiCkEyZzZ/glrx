@@ -62,6 +62,12 @@ glrx
 │   │   ├── frame_decoder.rs       # structs + models
 │   │   ├── mod.rs
 │   │   └── nav_data.rs
+│   ├── observables
+│   │   ├── base.rs
+│   │   ├── cn0.rs
+│   │   ├── doppler.rs
+│   │   ├── mod.rs
+│   │   └── pseudorange.rs
 │   ├── pipeline                   # high-level pipeline
 │   │   ├── mod.rs
 │   │   └── receiver.rs            # соединяет acquisition → tracking → solver
