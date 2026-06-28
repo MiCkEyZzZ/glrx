@@ -7,3 +7,4 @@
 //! единицами СИ и применёнными поправками.
 
 pub mod cn0;
+pub mod pseudorange;
