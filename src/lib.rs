@@ -3,7 +3,7 @@
 //! # Pipeline overview
 //!
 //! ```text
-//! IqSource → Signal → Acquisition → Tracking → Navigation → Solver → Output
+//! IqSource -> Signal -> Acquisition -> Tracking -> Navigation -> Solver -> Output
 //! ```
 
 #![forbid(unsafe_code)]
