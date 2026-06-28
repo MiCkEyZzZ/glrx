@@ -5,7 +5,7 @@ All notable changes to **GLRX** are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - 2026-06-23
+## [Unreleased] — 00-00-0000
 
 ### Added
 
@@ -20,6 +20,32 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     правилам GPS ICD-200 и набор синтетических тестов для subframe-потока.
   - Добавлена статистика работы декодера через `FrameDecoderStats` и политика
     повторов через `RetryPolicy`.
+  - Добавлен модуль `ephemeris` для декодирования GPS L1 C/A эфемерид
+    (Subframe 1, 2 и 3) согласно GPS ICD-200.
+  - Добавлены структуры `ClockParams`, `OrbitPart1`, `OrbitPart2` и
+    `Ephemeris` для хранения параметров часов спутника и орбитальных
+    элементов Кеплера.
+  - Добавлен `BitCursor` для извлечения беззнаковых и знаковых битовых
+    полей произвольной длины из навигационных слов.
+  - Реализованы `parse_subframe1`, `parse_subframe2` и
+    `parse_subframe3` для декодирования параметров часов, орбиты и
+    служебных полей GPS-навигационного сообщения.
+  - Реализована проверка консистентности эфемерид (`IODE`/`IODC`) и
+    состояния спутника (`SV Health`) через `Ephemeris::validate`.
+  - Добавлено вычисление положения спутника в системе координат ECEF по
+    алгоритму GPS ICD-200 с решением уравнения Кеплера.
+  - Добавлено вычисление коррекции часов спутника, включая
+    релятивистскую поправку.
+  - Добавлена сборка эфемерид из отдельных subframe через `NavData`,
+    хранение промежуточного состояния получения данных и проверка
+    актуальности эфемерид по времени `toe`.
+  - Добавлена поддержка декодирования параметров ионосферной модели
+    Клобухара (Subframe 4, Page 18) и хранения GPS–UTC коррекции.
+
+## [0.3.0] - 2026-06-23
+
+### Added
+
 - **examples**:
   - добавил новые примеры для проверки логики работы `channel.rs`:
   - `channel_bank_basic.rs`, `channel_lock_recovery.rs`, `channel_mass_32.rs` и
