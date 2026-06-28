@@ -364,9 +364,39 @@ mod tests {
     }
 
     #[test]
-    fn test_constant_signal_returns_none() {
-        let p = prompts_constant(100.0, 10);
+    fn test_quality_thresholds() {
+        let est = |db_hz| Cn0Estimate {
+            db_hz,
+            wls_weight: 1.0,
+            samples_used: 0,
+        };
 
-        assert!(estimate_cn0(&p, 0.001).is_none());
+        assert_eq!(est(38.0).quality(), SignalQuality::Good);
+        assert_eq!(est(37.999).quality(), SignalQuality::Marginal);
+
+        assert_eq!(est(30.0).quality(), SignalQuality::Marginal);
+        assert_eq!(est(29.999).quality(), SignalQuality::Weak);
+
+        assert_eq!(est(25.0).quality(), SignalQuality::Weak);
+        assert_eq!(est(24.999).quality(), SignalQuality::Lost);
+    }
+
+    #[test]
+    fn test_longer_coherent_time_gives_lower_cn0() {
+        let p = prompts_noisy(50.0, 5.0, 100);
+
+        let short = estimate_cn0(&p, 0.001).unwrap();
+        let long = estimate_cn0(&p, 0.020).unwrap();
+
+        assert!(short.db_hz > long.db_hz);
+    }
+
+    #[test]
+    fn test_cn0_is_clamped_to_upper_limit() {
+        let p = prompts_noisy(1000.0, 0.01, 1000);
+
+        let est = estimate_cn0(&p, 0.001).unwrap();
+
+        assert!(est.db_hz <= 70.0);
     }
 }
