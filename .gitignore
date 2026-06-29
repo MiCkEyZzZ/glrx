@@ -21,8 +21,11 @@ out/
 # Other
 ROADMAP.md
 utils
-base.rs
 solver
 glrx-types
 glrx-error
 glrx-core
+glrx-cli
+glrx-dsp
+glrx-receiver
+glrx-sdr
