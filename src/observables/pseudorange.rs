@@ -787,4 +787,75 @@ mod tests {
         // Не должно уходить в -inf или огромные значения
         assert!(result.raw_m.is_finite(), "week boundary must be handled");
     }
+
+    #[test]
+    fn test_corrected_is_exact_sum_of_components() {
+        let eph = dummy_ephemeris(1);
+        let input = nominal_input(1);
+        let r = compute_pseudorange(&input, &eph, None, None);
+        let sum = r.raw_m
+            + r.corrections.satellite_clock_m
+            + r.corrections.ionosphere_m
+            + r.corrections.troposphere_m;
+
+        assert!((r.corrected_m - sum).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_pseudorange_scales_linearly_with_time_bias() {
+        let eph = dummy_ephemeris(1);
+        let mut base = nominal_input(1);
+        let r1 = compute_pseudorange(&base, &eph, None, None);
+
+        base.receiver_time_s += 0.01; // +10 ms
+
+        let r2 = compute_pseudorange(&base, &eph, None, None);
+        let diff = r2.raw_m - r1.raw_m;
+        let expected = SPEED_OF_LIGHT * 0.01;
+
+        assert!((diff - expected).abs() < 10.0);
+    }
+
+    #[test]
+    fn test_clock_correction_reduces_ephemeris_bias() {
+        let eph1 = dummy_ephemeris(1);
+        let mut eph2 = dummy_ephemeris(1);
+
+        eph2.clock.af0 = 1e-5;
+
+        let r1 = compute_pseudorange(&nominal_input(1), &eph1, None, None);
+        let r2 = compute_pseudorange(&nominal_input(1), &eph2, None, None);
+
+        // corrected должен почти совпадать
+        assert!((r1.corrected_m - r2.corrected_m).abs() < 5.0);
+    }
+
+    #[test]
+    fn test_chip_rate_edge_cases_do_not_panic() {
+        let eph = dummy_ephemeris(1);
+        let mut input = nominal_input(1);
+
+        input.chip_freq_hz = -100.0;
+
+        let r = compute_pseudorange(&input, &eph, None, None);
+
+        assert!(r.raw_m.is_finite());
+
+        input.chip_freq_hz = f64::NAN;
+
+        let r = compute_pseudorange(&input, &eph, None, None);
+
+        assert!(r.raw_m.is_finite());
+    }
+
+    #[test]
+    fn test_compute_pseudorange_is_deterministic() {
+        let eph = dummy_ephemeris(1);
+        let input = nominal_input(1);
+        let a = compute_pseudorange(&input, &eph, None, None);
+        let b = compute_pseudorange(&input, &eph, None, None);
+
+        assert!((a.raw_m - b.raw_m).abs() < 1e-9);
+        assert!((a.corrected_m - b.corrected_m).abs() < 1e-9);
+    }
 }
