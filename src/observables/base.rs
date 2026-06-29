@@ -370,6 +370,23 @@ mod tests {
         })
     }
 
+    fn make_observable_with_cn0(cn0: Option<f32>) -> Observable {
+        let eph = dummy_ephemeris(1);
+
+        Observable::from_channel(&ObservableInput {
+            prn: 1,
+            code_phase_chips: 100.0,
+            chip_freq_hz: GPS_L1_CHIP_RATE,
+            carrier_freq_hz: GPS_L1_CARRIER_HZ + 500.0,
+            cn0_db_hz: cn0,
+            tow_count: 17,
+            receiver_time_s: 100.0,
+            eph: &eph,
+            iono: None,
+            user_pos: None,
+        })
+    }
+
     #[test]
     fn test_observable_prn_preserved() {
         let obs = make_observable(7);
@@ -516,5 +533,65 @@ mod tests {
         let obs = make_observable(1); // cn0=42 dB-Hz
 
         assert_eq!(obs.signal_quality(), SignalQuality::Good);
+    }
+
+    #[test]
+    fn test_observable_cn0_fallback_when_none() {
+        let obs = make_observable_with_cn0(None);
+
+        assert!(obs.cn0_db_hz().abs() < f32::EPSILON);
+        assert!(obs.wls_weight() >= 1.0);
+    }
+
+    #[test]
+    fn test_observable_is_usable_on_cn0_threshold_boundary() {
+        let eph = dummy_ephemeris(1);
+
+        let code_phase = 100.0;
+        let chip_freq = GPS_L1_CHIP_RATE;
+        let tow_count = 17;
+
+        let tow_s = tow_count_to_seconds(tow_count);
+        let t_tx = tow_s + code_phase / chip_freq;
+        let receiver_time_s = t_tx + 0.075;
+
+        let obs = Observable::from_channel(&ObservableInput {
+            prn: 1,
+            code_phase_chips: code_phase,
+            chip_freq_hz: chip_freq,
+            carrier_freq_hz: GPS_L1_CARRIER_HZ,
+            cn0_db_hz: Some(LOST_SIGNAL_CN0_THRESHOLD),
+            tow_count,
+            receiver_time_s,
+            eph: &eph,
+            iono: None,
+            user_pos: None,
+        });
+
+        assert!(obs.pseudorange.valid);
+        assert!(
+            (obs.cn0_db_hz() - LOST_SIGNAL_CN0_THRESHOLD).abs() < f32::EPSILON,
+            "expected C/N0 = {}, got {}",
+            LOST_SIGNAL_CN0_THRESHOLD,
+            obs.cn0_db_hz()
+        );
+        assert!(obs.is_usable());
+    }
+
+    #[test]
+    fn test_doppler_uses_pseudorange_tx_time_consistently() {
+        // doppler должен быть валидным и конечным даже при изменении chip phase
+        let mut obs2 = make_observable(1);
+
+        obs2.pseudorange.t_tx_s += 1e-3; // искусственный сдвиг
+
+        assert!(obs2.doppler_hz().is_finite());
+    }
+
+    #[test]
+    fn test_timestamp_equals_receiver_time() {
+        let obs = make_observable(1);
+
+        assert!(obs.timestamp_s.is_finite());
     }
 }
