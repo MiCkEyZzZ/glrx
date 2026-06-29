@@ -21,7 +21,6 @@ out/
 # Other
 ROADMAP.md
 utils
-solver
 glrx-types
 glrx-error
 glrx-core

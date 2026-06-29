@@ -30,4 +30,5 @@ pub mod observables;
 pub mod pipeline;
 pub mod rf;
 pub mod signal;
+pub mod solver;
 pub mod tracking;
