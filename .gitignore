@@ -22,4 +22,7 @@ out/
 ROADMAP.md
 utils
 base.rs
-doppler.rs
+solver
+glrx-types
+glrx-error
+glrx-core
