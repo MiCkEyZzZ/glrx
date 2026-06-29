@@ -399,4 +399,72 @@ mod tests {
 
         assert!(est.db_hz <= 70.0);
     }
+
+    #[test]
+    fn test_cn0_never_nan_or_inf() {
+        let p = prompts_noisy(50.0, 5.0, 100);
+
+        let est = estimate_cn0(&p, 0.001).unwrap();
+
+        assert!(est.db_hz.is_finite());
+        assert!(est.wls_weight.is_finite());
+    }
+
+    #[test]
+    fn test_cn0_monotonic_in_signal_power() {
+        let low = prompts_noisy(10.0, 5.0, 100);
+        let mid = prompts_noisy(50.0, 5.0, 100);
+        let high = prompts_noisy(200.0, 5.0, 100);
+
+        let cn0_low = estimate_cn0(&low, 0.001).unwrap().db_hz;
+        let cn0_mid = estimate_cn0(&mid, 0.001).unwrap().db_hz;
+        let cn0_high = estimate_cn0(&high, 0.001).unwrap().db_hz;
+
+        assert!(cn0_low < cn0_mid);
+        assert!(cn0_mid < cn0_high);
+    }
+
+    #[test]
+    fn test_cn0_monotonic_in_noise() {
+        let low_noise = prompts_noisy(50.0, 1.0, 100);
+        let high_noise = prompts_noisy(50.0, 20.0, 100);
+
+        let cn0_low = estimate_cn0(&low_noise, 0.001).unwrap().db_hz;
+        let cn0_high = estimate_cn0(&high_noise, 0.001).unwrap().db_hz;
+
+        assert!(cn0_low > cn0_high);
+    }
+
+    #[test]
+    fn test_wls_weight_exponential_growth() {
+        let est30 = from_tracking_estimate(30.0);
+        let est40 = from_tracking_estimate(40.0);
+
+        assert!(est40.wls_weight > est30.wls_weight);
+
+        // sanity: 10 dB increase = ×10 weight
+        let ratio = est40.wls_weight / est30.wls_weight;
+        assert!((ratio - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_cn0_clamping_behavior() {
+        let p = prompts_noisy(1000.0, 1.0, 1000); // шум достаточен для стабильной оценки
+        let est = estimate_cn0(&p, 0.001).unwrap();
+
+        assert!(est.db_hz <= 70.0);
+        assert!(est.db_hz >= -10.0);
+    }
+
+    #[test]
+    fn test_cn0_is_deterministic() {
+        let p1 = prompts_noisy(50.0, 5.0, 200);
+        let p2 = prompts_noisy(50.0, 5.0, 200);
+
+        let a = estimate_cn0(&p1, 0.001).unwrap();
+        let b = estimate_cn0(&p2, 0.001).unwrap();
+
+        assert!((a.db_hz - b.db_hz).abs() < 1e-6);
+        assert!((a.wls_weight - b.wls_weight).abs() < 1e-9);
+    }
 }
