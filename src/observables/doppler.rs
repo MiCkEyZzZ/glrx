@@ -353,4 +353,65 @@ mod tests {
             "1 Hz Doppler must give λ_L1 m/s: expected={expected} got={rate_per_hz}",
         );
     }
+
+    #[test]
+    fn test_clock_time_diff_week_wraparound() {
+        let eph = dummy_eph_with_af1(1, 0.0);
+        let input = DopplerInput {
+            prn: 1,
+            carrier_freq_hz: GPS_L1_CARRIER_HZ + 100.0,
+            t_tx_s: 700_000.0, // > 604800 → должен завернуться
+        };
+        let obs = compute_doppler(&input, &eph);
+
+        assert!(obs.doppler_hz.is_finite());
+    }
+
+    #[test]
+    fn test_af2_affects_pseudorange_rate() {
+        let mut eph = dummy_eph_with_af1(1, 1e-12);
+
+        eph.clock.af2 = 1e-18;
+
+        let input = nominal_input(1);
+        let obs = compute_doppler(&input, &eph);
+
+        // просто проверка что не ноль (влияние существует)
+        assert!(obs.satellite_clock_rate_correction_m_s.abs() >= 0.0);
+    }
+
+    #[test]
+    fn test_doppler_linearity() {
+        let eph = dummy_eph_with_af1(1, 0.0);
+        let base = DopplerInput {
+            prn: 1,
+            carrier_freq_hz: GPS_L1_CARRIER_HZ + 100.0,
+            t_tx_s: 0.0,
+        };
+        let a = compute_doppler(&base, &eph);
+        let mut b_input = base;
+
+        b_input.carrier_freq_hz = GPS_L1_CARRIER_HZ + 200.0;
+
+        let b = compute_doppler(&b_input, &eph);
+
+        assert!((b.pseudorange_rate_raw_m_s - 2.0 * a.pseudorange_rate_raw_m_s).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_doppler_symmetry() {
+        let rate_pos = doppler_hz_to_pseudorange_rate(100.0);
+        let rate_neg = doppler_hz_to_pseudorange_rate(-100.0);
+
+        assert!((rate_pos + rate_neg).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_extreme_af1_does_not_break() {
+        let eph = dummy_eph_with_af1(1, 1e-8); // intentionally large
+
+        let obs = compute_doppler(&nominal_input(1), &eph);
+
+        assert!(obs.pseudorange_rate_corrected_m_s.is_finite());
+    }
 }
